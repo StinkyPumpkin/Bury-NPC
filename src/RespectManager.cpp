@@ -20,7 +20,6 @@ namespace
 	bool         g_burying = false;
 	RE::FormID   g_buryBodyID = 0;
 	std::string  g_buryDeadName;
-	std::string  g_buryPlayerLine;
 	std::string  g_buryMessage;
 	bool         g_buryConfirmed = false;
 
@@ -103,15 +102,13 @@ namespace
 		}
 	}
 
-	std::string BuildEngraving(const std::string& a_deadName, const std::string& a_message,
-		const std::string& a_playerLine)
+	std::string BuildEngraving(const std::string& a_deadName, const std::string& a_message)
 	{
 		std::string engraving = a_deadName.empty() ? std::string("Here lies the fallen") : a_deadName;
 		if (!a_message.empty()) {
 			engraving += " — ";
 			engraving += a_message;
 		}
-		engraving += a_playerLine;
 		return engraving;
 	}
 
@@ -123,20 +120,18 @@ namespace
 	void FinalizeBury()
 	{
 		RE::FormID  bodyID;
-		std::string deadName, playerLine, message;
+		std::string deadName, message;
 		bool        confirmed;
 		{
 			std::scoped_lock lk(g_buryMutex);
 			if (!g_burying) return;
 			bodyID = g_buryBodyID;
 			deadName = g_buryDeadName;
-			playerLine = g_buryPlayerLine;
 			message = g_buryMessage;
 			confirmed = g_buryConfirmed;
 			g_burying = false;
 			g_buryBodyID = 0;
 			g_buryDeadName.clear();
-			g_buryPlayerLine.clear();
 			g_buryMessage.clear();
 			g_buryConfirmed = false;
 		}
@@ -149,7 +144,7 @@ namespace
 			return;
 		}
 
-		std::string engraving = BuildEngraving(deadName, message, playerLine);
+		std::string engraving = BuildEngraving(deadName, message);
 		if (auto* task = SKSE::GetTaskInterface()) {
 			task->AddTask([bodyID, engraving]() { PlaceGraveAndBury(bodyID, engraving); });
 		}
@@ -296,22 +291,12 @@ namespace RespectManager
 			if (auto* base = ref->GetBaseObject()) deadName = base->GetName();
 		}
 
-		std::string playerLine;
-		if (settings.includePlayerName.load()) {
-			if (auto* player = RE::PlayerCharacter::GetSingleton()) {
-				const char* pn = player->GetDisplayFullName();
-				if (pn && pn[0]) {
-					playerLine = std::string(" (buried by ") + pn + ")";
-				}
-			}
-		}
-
 		// Block re-activation while the box is up.
 		ref->SetActivationBlocked(true);
 
 		// Without UIExtensions we can't show a text box — bury with name only.
 		if (!g_hasUIExtensions) {
-			std::string engraving = BuildEngraving(deadName, "", playerLine);
+			std::string engraving = BuildEngraving(deadName, "");
 			ref->SetActivationBlocked(false);
 			if (auto* task = SKSE::GetTaskInterface()) {
 				task->AddTask([id = a_refID, engraving]() { PlaceGraveAndBury(id, engraving); });
@@ -324,7 +309,6 @@ namespace RespectManager
 			g_burying = true;
 			g_buryBodyID = a_refID;
 			g_buryDeadName = deadName;
-			g_buryPlayerLine = playerLine;
 			g_buryMessage.clear();
 			g_buryConfirmed = false;
 		}

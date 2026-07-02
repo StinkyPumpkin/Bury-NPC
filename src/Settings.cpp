@@ -40,14 +40,11 @@ namespace PFR
 
 		useDisplayName.store(
 			ini.GetBoolValue("Grave", "useDisplayName", useDisplayName.load()));
-		includePlayerName.store(
-			ini.GetBoolValue("Grave", "includePlayerName", includePlayerName.load()));
 
 		logger::info(
 			"Settings: layKB={} buryKB={} collectKB={} collectEnabled={} "
-			"useDisplayName={} includePlayerName={} debug={}",
+			"useDisplayName={} debug={}",
 			layKeyboard.load(), buryKeyboard.load(), collectKeyboard.load(),
-			collectEnabled.load(), useDisplayName.load(), includePlayerName.load(),
-			debug.load());
+			collectEnabled.load(), useDisplayName.load(), debug.load());
 	}
 }

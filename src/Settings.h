@@ -28,9 +28,6 @@ namespace PFR
 		// ("Bandit") like stock Pay Your Respects.
 		std::atomic<bool> useDisplayName{ true };
 
-		// Prepend "Buried by <player>" line to the memorial.
-		std::atomic<bool> includePlayerName{ true };
-
 	private:
 		Settings() = default;
 	};
