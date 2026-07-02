@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(PressFtoPayRespects VERSION 1.1.0 LANGUAGES CXX)
+project(PressFtoPayRespects VERSION 1.2.0 LANGUAGES CXX)
 
 # Deploy target — mod FOLDER gets --Claude; DLL name stays plain.
 set(OUTPUT_FOLDER "X:/MODDINGSSE/modorganizer2/mods/Press F To Pay Respects--Claude")
@@ -11,6 +11,7 @@ add_commonlibsse_plugin(${PROJECT_NAME} SOURCES
     src/Settings.cpp
     src/PromptManager.cpp
     src/RespectManager.cpp
+    src/PickupManager.cpp
     src/MsvcShim.cpp
 )
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)

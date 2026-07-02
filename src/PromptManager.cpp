@@ -2,14 +2,16 @@
 #include "PromptManager.h"
 #include "Settings.h"
 #include "RespectManager.h"
+#include "PickupManager.h"
 
 namespace
 {
 	constexpr SkyPromptAPI::EventID PROMPT_EVENT_ID = 47312;
 
-	// actionIDs distinguish the two prompts inside ProcessEvent.
+	// actionIDs distinguish the prompts inside ProcessEvent.
 	constexpr SkyPromptAPI::ActionID ACTION_LAY = 0;
 	constexpr SkyPromptAPI::ActionID ACTION_BURY = 1;
+	constexpr SkyPromptAPI::ActionID ACTION_COLLECT = 2;
 
 	SkyPromptAPI::ClientID    g_clientID = 0;
 	std::atomic<bool>         g_showing{ false };
@@ -18,10 +20,13 @@ namespace
 	// One key-pair (keyboard, gamepad) per action.
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_layKeys[2];
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_buryKeys[2];
+	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_collectKeys[2];
 
 	struct RespectPromptSink : public SkyPromptAPI::PromptSink
 	{
-		SkyPromptAPI::Prompt m_prompts[2];
+		SkyPromptAPI::Prompt m_prompts[3];
+		// How many prompts to expose right now (2 = Lay+Bury, 3 = +Pick Up).
+		std::atomic<std::uint8_t> m_promptCount{ 2 };
 
 		RespectPromptSink()
 		{
@@ -42,11 +47,20 @@ namespace
 			m_prompts[1].refid = 0;
 			m_prompts[1].text_color = 0xFFFFFFFF;
 			m_prompts[1].progress = 0.0f;
+
+			// Pick Up Body — hold (humanoid corpses only).
+			m_prompts[2].text = "Pick Up Body";
+			m_prompts[2].eventID = PROMPT_EVENT_ID;
+			m_prompts[2].actionID = ACTION_COLLECT;
+			m_prompts[2].type = SkyPromptAPI::PromptType::kHold;
+			m_prompts[2].refid = 0;
+			m_prompts[2].text_color = 0xFFFFFFFF;
+			m_prompts[2].progress = 0.0f;
 		}
 
 		std::span<const SkyPromptAPI::Prompt> GetPrompts() const override
 		{
-			return std::span<const SkyPromptAPI::Prompt>(m_prompts, 2);
+			return std::span<const SkyPromptAPI::Prompt>(m_prompts, m_promptCount.load());
 		}
 
 		void ProcessEvent(SkyPromptAPI::PromptEvent a_event) const override
@@ -61,6 +75,8 @@ namespace
 			SKSE::GetTaskInterface()->AddTask([refID, action]() {
 				if (action == ACTION_BURY) {
 					RespectManager::ExecuteBury(refID);
+				} else if (action == ACTION_COLLECT) {
+					PickupManager::ExecuteCollect(refID);
 				} else {
 					RespectManager::ExecuteLayToRest(refID);
 				}
@@ -81,11 +97,17 @@ namespace
 			static_cast<SkyPromptAPI::ButtonID>(s.buryKeyboard.load()) };
 		g_buryKeys[1] = { RE::INPUT_DEVICE::kGamepad,
 			static_cast<SkyPromptAPI::ButtonID>(s.buryGamepad.load()) };
+		g_collectKeys[0] = { RE::INPUT_DEVICE::kKeyboard,
+			static_cast<SkyPromptAPI::ButtonID>(s.collectKeyboard.load()) };
+		g_collectKeys[1] = { RE::INPUT_DEVICE::kGamepad,
+			static_cast<SkyPromptAPI::ButtonID>(s.collectGamepad.load()) };
 
 		g_sink.m_prompts[0].button_key =
 			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_layKeys, 2);
 		g_sink.m_prompts[1].button_key =
 			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_buryKeys, 2);
+		g_sink.m_prompts[2].button_key =
+			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_collectKeys, 2);
 	}
 
 	class CrosshairSink : public RE::BSTEventSink<SKSE::CrosshairRefEvent>
@@ -165,8 +187,15 @@ void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 	RE::FormID refID = a_ref->GetFormID();
 	g_currentRefID.store(refID);
 
-	g_sink.m_prompts[0].refid = refID;
-	g_sink.m_prompts[1].refid = refID;
+	// Show the Pick Up prompt only on dead humanoids, and only if enabled.
+	const bool canCollect = PFR::Settings::GetSingleton().collectEnabled.load() &&
+		PickupManager::CanCollect(a_ref);
+	const std::uint8_t count = canCollect ? 3 : 2;
+
+	for (std::uint8_t i = 0; i < count; ++i) {
+		g_sink.m_prompts[i].refid = refID;
+	}
+	g_sink.m_promptCount.store(count);
 
 	(void)SkyPromptAPI::SendPrompt(&g_sink, g_clientID);
 	g_showing.store(true);
