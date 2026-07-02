@@ -92,6 +92,9 @@ namespace
 			dropped->SetDelete(true);
 		}
 
+		logger::info("Pickup: drop slot={} body={:08X} bodyFound={} tokenRef={}",
+			a_slotIdx, s.bodyID, body ? "yes" : "no", dropped ? "yes" : "no");
+
 		if (s.misc) {
 			s.misc->fullName = s.defaultName;
 			s.misc->weight = s.defaultWeight;
@@ -100,10 +103,6 @@ namespace
 		s.bodyID = 0;
 		s.name.clear();
 		s.weight = s.defaultWeight;
-
-		if (PFR::Settings::GetSingleton().debug.load()) {
-			logger::debug("Pickup: respawned body from slot {}", a_slotIdx);
-		}
 	}
 
 	// ------------------------------------------------------------------
@@ -124,9 +123,8 @@ namespace
 			RE::BSTEventSource<RE::TESContainerChangedEvent>*) override
 		{
 			if (!a_event) return RE::BSEventNotifyControl::kContinue;
-			if (a_event->oldContainer != 0x14) return RE::BSEventNotifyControl::kContinue; // not from player
-			if (a_event->newContainer != 0) return RE::BSEventNotifyControl::kContinue;     // not a world drop
 
+			// Is this one of our carried corpse tokens moving?
 			std::size_t slotIdx = SIZE_MAX;
 			{
 				std::scoped_lock lk(g_mutex);
@@ -140,7 +138,19 @@ namespace
 			}
 			if (slotIdx == SIZE_MAX) return RE::BSEventNotifyControl::kContinue;
 
-			auto handle = a_event->reference;
+			// A world drop from the player creates a world reference; moving the
+			// token into a container (chest / merchant) does not — in that case
+			// leave the body stashed, matching the original mod.
+			auto droppedRef = a_event->reference.get();
+			logger::info(
+				"DropSink: corpse token {:08X} moved old={:08X} new={:08X} worldRef={} slot={}",
+				a_event->baseObj, a_event->oldContainer, a_event->newContainer,
+				droppedRef ? "yes" : "no", slotIdx);
+
+			if (a_event->oldContainer != 0x14) return RE::BSEventNotifyControl::kContinue; // not from player
+			if (!droppedRef) return RE::BSEventNotifyControl::kContinue;                    // stored, not dropped
+
+			RE::ObjectRefHandle handle = a_event->reference;
 			if (auto* task = SKSE::GetTaskInterface()) {
 				task->AddTask([slotIdx, handle]() { RespawnFromDrop(slotIdx, handle); });
 			}
