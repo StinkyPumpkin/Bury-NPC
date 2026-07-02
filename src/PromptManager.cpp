@@ -13,19 +13,27 @@ namespace
 	constexpr SkyPromptAPI::EventID EVENT_LAY = 47312;
 	constexpr SkyPromptAPI::EventID EVENT_BURY = 47313;
 	constexpr SkyPromptAPI::EventID EVENT_COLLECT = 47314;
+	constexpr SkyPromptAPI::EventID EVENT_DESTROY = 47315;
 
 	constexpr SkyPromptAPI::ActionID ACTION_LAY = 0;
 	constexpr SkyPromptAPI::ActionID ACTION_BURY = 1;
 	constexpr SkyPromptAPI::ActionID ACTION_COLLECT = 2;
+	constexpr SkyPromptAPI::ActionID ACTION_DESTROY = 3;
 
 	SkyPromptAPI::ClientID    g_clientID = 0;
 	std::atomic<bool>         g_showing{ false };
 	std::atomic<RE::FormID>   g_currentRefID{ 0 };
 
+	// Grave (Destroy Grave) prompt state — separate sink, revealed by a
+	// held modifier so it never clutters the epitaph.
+	std::atomic<RE::FormID>   g_currentGraveID{ 0 };
+	std::atomic<bool>         g_graveShowing{ false };
+
 	// One key-pair (keyboard, gamepad) per action.
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_layKeys[2];
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_buryKeys[2];
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_collectKeys[2];
+	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_graveKeys[2];
 
 	struct RespectPromptSink : public SkyPromptAPI::PromptSink
 	{
@@ -91,6 +99,98 @@ namespace
 
 	RespectPromptSink g_sink;
 
+	// ------------------------------------------------------------------
+	// Destroy Grave — a one-prompt sink shown only while the modifier is held
+	// on one of our graves.
+	// ------------------------------------------------------------------
+	struct GravePromptSink : public SkyPromptAPI::PromptSink
+	{
+		SkyPromptAPI::Prompt m_prompt;
+
+		GravePromptSink()
+		{
+			m_prompt.text = "Destroy Grave";
+			m_prompt.eventID = EVENT_DESTROY;
+			m_prompt.actionID = ACTION_DESTROY;
+			m_prompt.type = SkyPromptAPI::PromptType::kHold;
+			m_prompt.refid = 0;
+			m_prompt.text_color = 0xFFFFFFFF;
+			m_prompt.progress = 0.0f;
+		}
+
+		std::span<const SkyPromptAPI::Prompt> GetPrompts() const override
+		{
+			return std::span<const SkyPromptAPI::Prompt>(&m_prompt, 1);
+		}
+
+		void ProcessEvent(SkyPromptAPI::PromptEvent a_event) const override
+		{
+			if (a_event.type != SkyPromptAPI::PromptEventType::kAccepted) return;
+			RE::FormID graveID = g_currentGraveID.load();
+			if (graveID == 0) return;
+			SKSE::GetTaskInterface()->AddTask([graveID]() {
+				RespectManager::DestroyGrave(graveID);
+			});
+		}
+	};
+
+	GravePromptSink g_graveSink;
+
+	void SendGravePrompt()
+	{
+		if (g_clientID == 0) return;
+		if (!PFR::Settings::GetSingleton().graveDestroyEnabled.load()) return;
+		RE::FormID graveID = g_currentGraveID.load();
+		if (graveID == 0) return;
+		g_graveSink.m_prompt.refid = graveID;
+		(void)SkyPromptAPI::SendPrompt(&g_graveSink, g_clientID);
+		g_graveShowing.store(true);
+	}
+
+	void RemoveGravePrompt()
+	{
+		if (g_graveShowing.load()) {
+			SkyPromptAPI::RemovePrompt(&g_graveSink, g_clientID);
+			g_graveShowing.store(false);
+		}
+	}
+
+	// Tracks the reveal modifier: a fresh modifier press while looking at a
+	// grave reveals the Destroy Grave prompt; releasing hides it.  (Requiring a
+	// fresh press means walking up while already holding the key — e.g.
+	// sprinting — does not surprise-reveal it.)
+	class ModifierInputSink : public RE::BSTEventSink<RE::InputEvent*>
+	{
+	public:
+		static ModifierInputSink& GetSingleton()
+		{
+			static ModifierInputSink instance;
+			return instance;
+		}
+
+		RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* a_events,
+			RE::BSTEventSource<RE::InputEvent*>*) override
+		{
+			if (!a_events) return RE::BSEventNotifyControl::kContinue;
+			const auto modKey = static_cast<std::uint32_t>(
+				PFR::Settings::GetSingleton().graveDestroyModifier.load());
+
+			for (auto* e = *a_events; e; e = e->next) {
+				if (e->GetEventType() != RE::INPUT_EVENT_TYPE::kButton) continue;
+				auto* btn = e->AsButtonEvent();
+				if (!btn || btn->GetDevice() != RE::INPUT_DEVICE::kKeyboard) continue;
+				if (btn->GetIDCode() != modKey) continue;
+
+				if (btn->IsDown()) {
+					if (g_currentGraveID.load() != 0) SendGravePrompt();
+				} else if (btn->IsUp()) {
+					RemoveGravePrompt();
+				}
+			}
+			return RE::BSEventNotifyControl::kContinue;
+		}
+	};
+
 	void BuildButtonKeys()
 	{
 		auto& s = PFR::Settings::GetSingleton();
@@ -113,6 +213,15 @@ namespace
 			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_buryKeys, 2);
 		g_sink.m_prompts[2].button_key =
 			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_collectKeys, 2);
+
+		// The Destroy Grave prompt fills on the execute key (held while the
+		// reveal modifier is down).
+		g_graveKeys[0] = { RE::INPUT_DEVICE::kKeyboard,
+			static_cast<SkyPromptAPI::ButtonID>(s.graveDestroyKey.load()) };
+		g_graveKeys[1] = { RE::INPUT_DEVICE::kGamepad,
+			static_cast<SkyPromptAPI::ButtonID>(-1) };
+		g_graveSink.m_prompt.button_key =
+			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_graveKeys, 2);
 	}
 
 	class CrosshairSink : public RE::BSTEventSink<SKSE::CrosshairRefEvent>
@@ -134,6 +243,10 @@ namespace
 				auto* actor = ref->As<RE::Actor>();
 				if (actor && actor->IsDead()) {
 					PromptManager::ShowForRef(ref.get());
+					return RE::BSEventNotifyControl::kContinue;
+				}
+				if (RespectManager::IsOurGrave(ref.get())) {
+					PromptManager::ShowGraveForRef(ref.get());
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				if (auto* base = ref->GetBaseObject()) {
@@ -166,6 +279,9 @@ void PromptManager::Init()
 	if (auto* crosshairSrc = SKSE::GetCrosshairRefEventSource()) {
 		crosshairSrc->AddEventSink(&CrosshairSink::GetSingleton());
 	}
+	if (auto* idm = RE::BSInputDeviceManager::GetSingleton()) {
+		idm->AddEventSink(&ModifierInputSink::GetSingleton());
+	}
 
 	(void)SkyPromptAPI::RequestTheme(g_clientID, "PressFtoPayRespects");
 	logger::info("PromptManager: init clientID={} (Lay=kb{} / Bury=kb{})",
@@ -180,14 +296,22 @@ void PromptManager::Shutdown()
 		SkyPromptAPI::RemovePrompt(&g_sink, g_clientID);
 		g_showing.store(false);
 	}
+	RemoveGravePrompt();
 	if (auto* crosshairSrc = SKSE::GetCrosshairRefEventSource()) {
 		crosshairSrc->RemoveEventSink(&CrosshairSink::GetSingleton());
+	}
+	if (auto* idm = RE::BSInputDeviceManager::GetSingleton()) {
+		idm->RemoveEventSink(&ModifierInputSink::GetSingleton());
 	}
 }
 
 void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 {
 	if (!a_ref || g_clientID == 0) return;
+
+	// Body and grave prompts are mutually exclusive.
+	g_currentGraveID.store(0);
+	RemoveGravePrompt();
 
 	RE::FormID refID = a_ref->GetFormID();
 	g_currentRefID.store(refID);
@@ -206,6 +330,24 @@ void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 	g_showing.store(true);
 }
 
+void PromptManager::ShowGraveForRef(RE::TESObjectREFR* a_ref)
+{
+	if (!a_ref || g_clientID == 0) return;
+	if (!PFR::Settings::GetSingleton().graveDestroyEnabled.load()) return;
+
+	// Grave and body prompts are mutually exclusive.
+	if (g_showing.load()) {
+		SkyPromptAPI::RemovePrompt(&g_sink, g_clientID);
+		g_showing.store(false);
+		g_currentRefID.store(0);
+	}
+
+	// Just note which grave we're on — the Destroy Grave prompt itself only
+	// appears when the reveal modifier is pressed (ModifierInputSink), so the
+	// epitaph stays clean until the player deliberately holds it.
+	g_currentGraveID.store(a_ref->GetFormID());
+}
+
 void PromptManager::Hide()
 {
 	if (g_showing.load()) {
@@ -213,6 +355,8 @@ void PromptManager::Hide()
 		g_showing.store(false);
 		g_currentRefID.store(0);
 	}
+	g_currentGraveID.store(0);
+	RemoveGravePrompt();
 }
 
 void PromptManager::RefreshHotkeys()

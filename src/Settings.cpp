@@ -38,6 +38,13 @@ namespace PFR
 		collectEnabled.store(
 			ini.GetBoolValue("Collect", "collectEnabled", collectEnabled.load()));
 
+		graveDestroyEnabled.store(
+			ini.GetBoolValue("Grave", "graveDestroyEnabled", graveDestroyEnabled.load()));
+		graveDestroyModifier.store(static_cast<int32_t>(
+			ini.GetLongValue("Grave", "graveDestroyModifier", graveDestroyModifier.load())));
+		graveDestroyKey.store(static_cast<int32_t>(
+			ini.GetLongValue("Grave", "graveDestroyKey", graveDestroyKey.load())));
+
 		useDisplayName.store(
 			ini.GetBoolValue("Grave", "useDisplayName", useDisplayName.load()));
 
