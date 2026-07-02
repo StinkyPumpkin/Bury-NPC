@@ -53,8 +53,8 @@ the slot. Cap: 50 simultaneously-carried bodies.
 - `[Hotkeys]` `layToRestKeyboard` (default 33 = F), `buryKeyboard`
   (default 19 = R), `collectKeyboard` (default 20 = T), plus gamepad variants
   (-1 = off).
-- `[Grave]` `useDisplayName` (default true — engrave runtime name),
-  `includePlayerName` (default true — "Buried by <player>").
+- `[Grave]` `useDisplayName` (default true — engrave the runtime display name;
+  false = base-object name like "Bandit").
 - `[Collect]` `collectEnabled` (default true — set false to hide the pick-up
   prompt).
 
