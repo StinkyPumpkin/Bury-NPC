@@ -6,12 +6,13 @@ pile) and:
 
 - **Hold F → Lay to Rest** — plays the turn-undead sound and removes the body
   (no explosion — removed from the original).
-- **Hold R → Bury with Gravestone** — pick a memorial category (Friend /
-  Stranger / Foe), places a gravestone (ships in `PressFCorpses.esp`) at the
-  body inscribed with the deceased's **display name** (Real Names / any rename
-  mod shows correctly) + a memorial line, then removes the body. The
-  inscription is the grave's crosshair name — fully self-contained, no Pay Your
-  Respects needed.
+- **Hold R → Bury with Gravestone** — a text box pops up to type a **custom
+  epitaph**; on confirm, a gravestone (ships in `PressFCorpses.esp`) is placed
+  at the body inscribed with the deceased's **display name** (Real Names / any
+  rename mod shows correctly) + your message, then the body is removed. The
+  inscription is the grave's crosshair name. Cancel the box (Esc) to leave the
+  body untouched. The text box uses **UIExtensions** (near-universal); without
+  it, the grave is placed with the name only.
 - **Hold T → Pick Up Body** *(dead humanoids only)* — carry the corpse as an
   inventory item named "<Name>'s body" (weight = body + its gear). Drop the
   item to set the body back down where you dropped it. This reimplements the
@@ -27,6 +28,9 @@ pile) and:
 ## Requirements
 
 - **SkyPrompt** (the prompt framework)
+- **UIExtensions** (soft) — provides the custom-epitaph text box for Bury.
+  Almost every load order already has it. Without it, Bury still works but
+  inscribes the name only (no message box).
 - **PressFCorpses.esp** — ships in this mod folder. ESL-flagged, holding 50
   corpse-token MiscObjects + a hidden holding cell (pick-up) + the grave
   activator (bury). **Enable it in your plugin list** or both Pick Up and Bury
