@@ -25,10 +25,10 @@ namespace PFR
 
 		// Destroy-grave: hold this MODIFIER while looking at one of our graves
 		// to reveal a "Destroy Grave" hold prompt on graveDestroyKey.  Hidden
-		// otherwise so the epitaph stays clean.  LShift = 0x2A (42), R = 0x13 (19).
+		// otherwise so the epitaph stays clean.  LShift = 0x2A (42), E = 0x12 (18).
 		std::atomic<bool>    graveDestroyEnabled{ true };
 		std::atomic<int32_t> graveDestroyModifier{ 42 };
-		std::atomic<int32_t> graveDestroyKey{ 19 };
+		std::atomic<int32_t> graveDestroyKey{ 18 };
 
 		// When true the grave engraves the runtime display name
 		// (Real Names / any rename mod).  When false, the base-object name
