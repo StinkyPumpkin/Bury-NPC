@@ -51,7 +51,13 @@ size_t __cdecl __std_regex_transform_primary_char(const void*, void*, size_t) { 
 // fires. extern "C" symbols only resolve by NAME at link time — so even if
 // the signature is slightly wrong, the linker is satisfied. Runtime risk only
 // applies if CommonLibSSE actually invokes this, which is unlikely.
+//
+// NOTE: MSVC STL 14.51 (_MSC_VER 1951) now DECLARES __std_replace_copy_2 in
+// <algorithm> and ships it in the runtime lib, so defining it here collides
+// (C2733: cannot overload an extern "C" function). Only stub it on older
+// toolchains that declared-but-didn't-export it.
 // ---------------------------------------------------------------------------
+#if _MSC_VER < 1950
 void __stdcall __std_replace_copy_2(
     const uint16_t* first, const uint16_t* last,
     uint16_t* dest,
@@ -61,5 +67,6 @@ void __stdcall __std_replace_copy_2(
         *dest = (*first == old_val) ? new_val : *first;
     }
 }
+#endif
 
 }  // extern "C"

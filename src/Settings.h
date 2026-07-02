@@ -18,6 +18,11 @@ namespace PFR
 		std::atomic<int32_t> buryKeyboard{ 19 };
 		std::atomic<int32_t> buryGamepad{ -1 };
 
+		// Pick-up-body hold action.  T = 0x14 (20).
+		std::atomic<int32_t> collectKeyboard{ 20 };
+		std::atomic<int32_t> collectGamepad{ -1 };
+		std::atomic<bool>    collectEnabled{ true };
+
 		// When true the grave engraves the runtime display name
 		// (Real Names / any rename mod).  When false, the base-object name
 		// ("Bandit") like stock Pay Your Respects.

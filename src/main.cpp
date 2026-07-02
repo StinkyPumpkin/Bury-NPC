@@ -2,6 +2,7 @@
 #include "Settings.h"
 #include "PromptManager.h"
 #include "RespectManager.h"
+#include "PickupManager.h"
 
 namespace
 {
@@ -24,6 +25,7 @@ namespace
 		case SKSE::MessagingInterface::kDataLoaded:
 			PFR::Settings::GetSingleton().Load();
 			RespectManager::OnDataLoaded();
+			PickupManager::Init();
 			PromptManager::Init();
 			break;
 		default:
@@ -38,6 +40,9 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 	SKSE::Init(a_skse);
 
 	logger::info("{} v{} loaded", Plugin::NAME, Plugin::VERSION);
+
+	// Cosave callbacks must be registered at load, before any save is read.
+	PickupManager::RegisterSerialization();
 
 	SKSE::GetMessagingInterface()->RegisterListener(MessageHandler);
 	return true;

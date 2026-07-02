@@ -30,6 +30,13 @@ namespace PFR
 			ini.GetLongValue("Hotkeys", "buryKeyboard", buryKeyboard.load())));
 		buryGamepad.store(static_cast<int32_t>(
 			ini.GetLongValue("Hotkeys", "buryGamepad", buryGamepad.load())));
+		collectKeyboard.store(static_cast<int32_t>(
+			ini.GetLongValue("Hotkeys", "collectKeyboard", collectKeyboard.load())));
+		collectGamepad.store(static_cast<int32_t>(
+			ini.GetLongValue("Hotkeys", "collectGamepad", collectGamepad.load())));
+
+		collectEnabled.store(
+			ini.GetBoolValue("Collect", "collectEnabled", collectEnabled.load()));
 
 		useDisplayName.store(
 			ini.GetBoolValue("Grave", "useDisplayName", useDisplayName.load()));
@@ -37,8 +44,10 @@ namespace PFR
 			ini.GetBoolValue("Grave", "includePlayerName", includePlayerName.load()));
 
 		logger::info(
-			"Settings: layKB={} buryKB={} useDisplayName={} includePlayerName={} debug={}",
-			layKeyboard.load(), buryKeyboard.load(),
-			useDisplayName.load(), includePlayerName.load(), debug.load());
+			"Settings: layKB={} buryKB={} collectKB={} collectEnabled={} "
+			"useDisplayName={} includePlayerName={} debug={}",
+			layKeyboard.load(), buryKeyboard.load(), collectKeyboard.load(),
+			collectEnabled.load(), useDisplayName.load(), includePlayerName.load(),
+			debug.load());
 	}
 }
