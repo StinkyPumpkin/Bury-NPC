@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "RespectManager.h"
 #include "Settings.h"
+#include "PromptManager.h"
 
 #include <mutex>
 
@@ -293,6 +294,9 @@ namespace RespectManager
 
 		// Block re-activation while the box is up.
 		ref->SetActivationBlocked(true);
+
+		// Hide the SkyPrompt buttons so they don't sit over the text box.
+		PromptManager::Hide();
 
 		// Without UIExtensions we can't show a text box — bury with name only.
 		if (!g_hasUIExtensions) {
