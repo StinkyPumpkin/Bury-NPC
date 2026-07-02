@@ -15,4 +15,11 @@ namespace RespectManager
 	// body, writes DeadName + Memorial onto its Papyrus script, then removes
 	// the body.  DeadName uses GetDisplayName() so Real Names shows.
 	void ExecuteBury(RE::FormID a_refID);
+
+	// True if the ref is a gravestone THIS mod placed (base == our grave
+	// activator).  Used to show the Destroy Grave prompt only on our graves.
+	bool IsOurGrave(RE::TESObjectREFR* a_ref);
+
+	// Remove a gravestone this mod placed.
+	void DestroyGrave(RE::FormID a_graveID);
 }

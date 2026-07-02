@@ -315,4 +315,24 @@ namespace RespectManager
 
 		OpenBuryTextEntry();
 	}
+
+	bool IsOurGrave(RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref || !g_graveActivator) return false;
+		return a_ref->GetBaseObject() == g_graveActivator;
+	}
+
+	void DestroyGrave(RE::FormID a_graveID)
+	{
+		auto* grave = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_graveID);
+		if (!grave || grave->GetBaseObject() != g_graveActivator) return;  // only our graves
+
+		PlayTurnUndeadSound();
+		grave->Disable();
+		grave->SetDelete(true);
+
+		if (PFR::Settings::GetSingleton().debug.load()) {
+			logger::debug("DestroyGrave: removed {:08X}", a_graveID);
+		}
+	}
 }

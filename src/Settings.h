@@ -23,6 +23,13 @@ namespace PFR
 		std::atomic<int32_t> collectGamepad{ -1 };
 		std::atomic<bool>    collectEnabled{ true };
 
+		// Destroy-grave: hold this MODIFIER while looking at one of our graves
+		// to reveal a "Destroy Grave" hold prompt on graveDestroyKey.  Hidden
+		// otherwise so the epitaph stays clean.  LShift = 0x2A (42), R = 0x13 (19).
+		std::atomic<bool>    graveDestroyEnabled{ true };
+		std::atomic<int32_t> graveDestroyModifier{ 42 };
+		std::atomic<int32_t> graveDestroyKey{ 19 };
+
 		// When true the grave engraves the runtime display name
 		// (Real Names / any rename mod).  When false, the base-object name
 		// ("Bandit") like stock Pay Your Respects.
