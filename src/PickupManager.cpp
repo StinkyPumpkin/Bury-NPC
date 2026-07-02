@@ -66,43 +66,75 @@ namespace
 	}
 
 	// ------------------------------------------------------------------
-	// Respawn a stashed body at the spot the token was dropped, then bin the
-	// token and free the slot.  Runs on the main thread via the task queue.
+	// The dropped world ref is created a frame or two AFTER the container
+	// event, and the event itself carries a null reference (confirmed in the
+	// log: worldRef=no), so we can't get the dropped ref from the event. Find
+	// it by scanning near the player for a ref of the token's base form.
 	// ------------------------------------------------------------------
-	void RespawnFromDrop(std::size_t a_slotIdx, RE::ObjectRefHandle a_droppedHandle)
+	RE::TESObjectREFR* FindDroppedToken(RE::FormID a_tokenBase)
 	{
-		std::scoped_lock lk(g_mutex);
-		if (a_slotIdx >= g_slots.size()) return;
-		Slot& s = g_slots[a_slotIdx];
-		if (!s.occupied) return;
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		auto* tes = RE::TES::GetSingleton();
+		if (!player || !tes) return nullptr;
 
-		auto* body = RE::TESForm::LookupByID<RE::TESObjectREFR>(s.bodyID);
-		auto  dropped = a_droppedHandle.get();
+		RE::TESObjectREFR* found = nullptr;
+		tes->ForEachReferenceInRange(player, 1024.0f, [&](RE::TESObjectREFR& a_ref) {
+			auto* base = a_ref.GetBaseObject();
+			if (base && base->GetFormID() == a_tokenBase &&
+				!a_ref.IsMarkedForDeletion() && !a_ref.IsDisabled()) {
+				found = &a_ref;
+				return RE::BSContainer::ForEachResult::kStop;
+			}
+			return RE::BSContainer::ForEachResult::kContinue;
+		});
+		return found;
+	}
 
+	// ------------------------------------------------------------------
+	// Respawn a stashed body at the dropped token, bin the token, free the
+	// slot.  Runs on the main thread; retries a few frames until the dropped
+	// world ref has spawned.
+	// ------------------------------------------------------------------
+	void RespawnFromDrop(std::size_t a_slotIdx, RE::FormID a_tokenBase, RE::FormID a_bodyID, int a_attempt)
+	{
+		RE::TESObjectREFR* token = FindDroppedToken(a_tokenBase);
+		if (!token && a_attempt < 8) {
+			if (auto* task = SKSE::GetTaskInterface()) {
+				task->AddTask([a_slotIdx, a_tokenBase, a_bodyID, a_attempt]() {
+					RespawnFromDrop(a_slotIdx, a_tokenBase, a_bodyID, a_attempt + 1);
+				});
+			}
+			return;
+		}
+
+		auto* body = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_bodyID);
 		if (body) {
-			if (dropped) {
-				body->MoveTo(dropped.get());
+			if (token) {
+				body->MoveTo(token);  // exact drop spot
 			} else if (auto* player = RE::PlayerCharacter::GetSingleton()) {
-				body->MoveTo(player);  // fallback: drop at the player
+				body->MoveTo(player); // token never found — drop at the player
 			}
 		}
-
-		if (dropped) {
-			dropped->Disable();
-			dropped->SetDelete(true);
+		if (token) {
+			token->Disable();
+			token->SetDelete(true);
 		}
 
-		logger::info("Pickup: drop slot={} body={:08X} bodyFound={} tokenRef={}",
-			a_slotIdx, s.bodyID, body ? "yes" : "no", dropped ? "yes" : "no");
+		logger::info("Pickup: drop slot={} body={:08X} bodyFound={} token={} attempt={}",
+			a_slotIdx, a_bodyID, body ? "yes" : "no", token ? "yes" : "no", a_attempt);
 
-		if (s.misc) {
-			s.misc->fullName = s.defaultName;
-			s.misc->weight = s.defaultWeight;
+		std::scoped_lock lk(g_mutex);
+		if (a_slotIdx < g_slots.size()) {
+			Slot& s = g_slots[a_slotIdx];
+			if (s.misc) {
+				s.misc->fullName = s.defaultName;
+				s.misc->weight = s.defaultWeight;
+			}
+			s.occupied = false;
+			s.bodyID = 0;
+			s.name.clear();
+			s.weight = s.defaultWeight;
 		}
-		s.occupied = false;
-		s.bodyID = 0;
-		s.name.clear();
-		s.weight = s.defaultWeight;
 	}
 
 	// ------------------------------------------------------------------
@@ -126,33 +158,35 @@ namespace
 
 			// Is this one of our carried corpse tokens moving?
 			std::size_t slotIdx = SIZE_MAX;
+			RE::FormID  bodyID = 0;
 			{
 				std::scoped_lock lk(g_mutex);
 				for (std::size_t i = 0; i < g_slots.size(); ++i) {
 					auto& s = g_slots[i];
 					if (s.occupied && s.misc && s.misc->GetFormID() == a_event->baseObj) {
 						slotIdx = i;
+						bodyID = s.bodyID;
 						break;
 					}
 				}
 			}
 			if (slotIdx == SIZE_MAX) return RE::BSEventNotifyControl::kContinue;
 
-			// A world drop from the player creates a world reference; moving the
-			// token into a container (chest / merchant) does not — in that case
-			// leave the body stashed, matching the original mod.
-			auto droppedRef = a_event->reference.get();
-			logger::info(
-				"DropSink: corpse token {:08X} moved old={:08X} new={:08X} worldRef={} slot={}",
-				a_event->baseObj, a_event->oldContainer, a_event->newContainer,
-				droppedRef ? "yes" : "no", slotIdx);
+			logger::info("DropSink: corpse token {:08X} moved old={:08X} new={:08X} slot={}",
+				a_event->baseObj, a_event->oldContainer, a_event->newContainer, slotIdx);
 
-			if (a_event->oldContainer != 0x14) return RE::BSEventNotifyControl::kContinue; // not from player
-			if (!droppedRef) return RE::BSEventNotifyControl::kContinue;                    // stored, not dropped
+			// Only a world DROP from the player restores the body. The event's
+			// own `reference` is null here, so we find the dropped ref later.
+			// Moving the token into a container (new != 0) leaves it stashed —
+			// same behaviour as the original mod.
+			if (a_event->oldContainer != 0x14) return RE::BSEventNotifyControl::kContinue;
+			if (a_event->newContainer != 0) return RE::BSEventNotifyControl::kContinue;
 
-			RE::ObjectRefHandle handle = a_event->reference;
+			RE::FormID tokenBase = a_event->baseObj;
 			if (auto* task = SKSE::GetTaskInterface()) {
-				task->AddTask([slotIdx, handle]() { RespawnFromDrop(slotIdx, handle); });
+				task->AddTask([slotIdx, tokenBase, bodyID]() {
+					RespawnFromDrop(slotIdx, tokenBase, bodyID, 0);
+				});
 			}
 			return RE::BSEventNotifyControl::kContinue;
 		}

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(PressFtoPayRespects VERSION 1.2.1 LANGUAGES CXX)
+project(PressFtoPayRespects VERSION 1.2.2 LANGUAGES CXX)
 
 # Deploy target — mod FOLDER gets --Claude; DLL name stays plain.
 set(OUTPUT_FOLDER "X:/MODDINGSSE/modorganizer2/mods/Press F To Pay Respects--Claude")

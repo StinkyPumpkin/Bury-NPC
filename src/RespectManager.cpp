@@ -71,53 +71,6 @@ namespace
 	}
 
 	// ------------------------------------------------------------------
-	// Write DeadName + Memorial onto the placed grave's Papyrus script
-	// (WW42PYRActivator1Script).  The script binds a frame or two after
-	// PlaceObjectAtMe, so retry across frames until the object is bound.
-	// ------------------------------------------------------------------
-	void SetGraveEngraving(RE::FormID a_graveID, std::string a_name, std::string a_memorial, int a_attempt)
-	{
-		auto* grave = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_graveID);
-		if (!grave) return;
-
-		auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-		if (!vm) return;
-		auto* policy = vm->GetObjectHandlePolicy();
-		if (!policy) return;
-
-		auto handle = policy->GetHandleForObject(
-			static_cast<RE::VMTypeID>(grave->GetFormType()), grave);
-
-		RE::BSTSmartPointer<RE::BSScript::Object> object;
-		vm->FindBoundObject(handle, "WW42PYRActivator1Script", object);
-
-		if (!object) {
-			if (a_attempt < 12) {
-				// Not bound yet — try again next frame.
-				if (auto* task = SKSE::GetTaskInterface()) {
-					task->AddTask([a_graveID, a_name, a_memorial, a_attempt]() {
-						SetGraveEngraving(a_graveID, a_name, a_memorial, a_attempt + 1);
-					});
-				}
-			} else {
-				logger::warn("Bury: grave {:08X} script never bound, engraving not set", a_graveID);
-			}
-			return;
-		}
-
-		if (auto* prop = object->GetProperty("DeadName")) {
-			prop->SetString(a_name);
-		}
-		if (auto* prop = object->GetProperty("Memorial")) {
-			prop->SetString(a_memorial);
-		}
-
-		if (PFR::Settings::GetSingleton().debug.load()) {
-			logger::debug("Bury: engraved grave {:08X} name='{}'", a_graveID, a_name);
-		}
-	}
-
-	// ------------------------------------------------------------------
 	// Message-box callback wrapper.
 	// ------------------------------------------------------------------
 	class MessageCallback : public RE::IMessageBoxCallback
@@ -189,18 +142,19 @@ namespace RespectManager
 		g_cleanupCell = RE::TESForm::LookupByEditorID<RE::TESObjectCELL>("WIDeadBodyCleanupCell");
 		g_soundForm = RE::TESForm::LookupByID<RE::BGSSoundDescriptorForm>(0x00057C65);
 
-		// Pay Your Respects grave activator: WW42PYRGraveActivator1 (000D63).
+		// Grave activator now ships in PressFCorpses.esp (PFR_GraveActivator,
+		// 0x834) — no Pay Your Respects dependency.
 		auto* dh = RE::TESDataHandler::GetSingleton();
 		if (dh) {
-			g_graveActivator = dh->LookupForm<RE::TESObjectACTI>(0x000D63, "PayYourRespects.esp");
+			g_graveActivator = dh->LookupForm<RE::TESObjectACTI>(0x000834, "PressFCorpses.esp");
 		}
 
 		logger::info("RespectManager: cleanupCell={} sound={} graveActivator={}",
 			g_cleanupCell != nullptr, g_soundForm != nullptr, g_graveActivator != nullptr);
 
 		if (!g_graveActivator) {
-			logger::warn("RespectManager: PayYourRespects.esp grave activator not found — "
-				"the Bury option needs Pay Your Respects installed");
+			logger::warn("RespectManager: PressFCorpses.esp grave activator not found — "
+				"enable PressFCorpses.esp for the Bury option");
 		}
 	}
 
@@ -248,7 +202,7 @@ namespace RespectManager
 			if (auto* player = RE::PlayerCharacter::GetSingleton()) {
 				const char* pn = player->GetDisplayFullName();
 				if (pn && pn[0]) {
-					playerLine = std::string("Buried by ") + pn + "\n";
+					playerLine = std::string(" (buried by ") + pn + ")";
 				}
 			}
 		}
@@ -270,19 +224,19 @@ namespace RespectManager
 			if (a_button == 0) { pool = kFriend;  poolSize = static_cast<int>(std::size(kFriend)); }
 			else if (a_button == 2) { pool = kFoe; poolSize = static_cast<int>(std::size(kFoe)); }
 
-			std::string memorial = std::string("\n") + playerLine + "\n" + pool[PickIndex(poolSize)];
+			// One-line inscription shown when you look at the grave.
+			std::string engraving = deadName.empty() ? std::string("Here lies the fallen") : deadName;
+			engraving += " — ";
+			engraving += pool[PickIndex(poolSize)];
+			engraving += playerLine;
 
-			// Place the grave at the body, engrave it, remove the body.
+			// Place the grave at the body, inscribe it (SetDisplayName persists
+			// on the ref via extra data), remove the body.  No Papyrus / no
+			// Pay Your Respects dependency.
 			RE::NiPointer<RE::TESObjectREFR> grave =
 				body->PlaceObjectAtMe(g_graveActivator, false);
 			if (grave) {
-				RE::FormID graveID = grave->GetFormID();
-				std::string name = deadName;
-				if (auto* task = SKSE::GetTaskInterface()) {
-					task->AddTask([graveID, name, memorial]() {
-						SetGraveEngraving(graveID, name, memorial, 0);
-					});
-				}
+				grave->SetDisplayName(RE::BSFixedString(engraving), true);
 			} else {
 				logger::warn("Bury: PlaceObjectAtMe returned null for {:08X}", a_refID);
 			}
