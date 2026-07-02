@@ -69,16 +69,23 @@ namespace
 	// The dropped world ref is created a frame or two AFTER the container
 	// event, and the event itself carries a null reference (confirmed in the
 	// log: worldRef=no), so we can't get the dropped ref from the event. Find
-	// it by scanning near the player for a ref of the token's base form.
+	// it by scanning the PLAYER'S OWN CELL for a ref of the token's base form.
+	//
+	// IMPORTANT: we scan a single cell (ForEachReference), NOT the world grid
+	// (TES::ForEachReferenceInRange).  The grid walk crashed when a drop
+	// happened right after a save-load while exterior cells were still
+	// streaming (torn grid -> access violation).  A dropped item lands in the
+	// player's own cell, so a single-cell scan finds it and is main-thread safe.
 	// ------------------------------------------------------------------
 	RE::TESObjectREFR* FindDroppedToken(RE::FormID a_tokenBase)
 	{
 		auto* player = RE::PlayerCharacter::GetSingleton();
-		auto* tes = RE::TES::GetSingleton();
-		if (!player || !tes) return nullptr;
+		if (!player) return nullptr;
+		auto* cell = player->GetParentCell();
+		if (!cell) return nullptr;
 
 		RE::TESObjectREFR* found = nullptr;
-		tes->ForEachReferenceInRange(player, 1024.0f, [&](RE::TESObjectREFR& a_ref) {
+		cell->ForEachReference([&](RE::TESObjectREFR& a_ref) {
 			auto* base = a_ref.GetBaseObject();
 			if (base && base->GetFormID() == a_tokenBase &&
 				!a_ref.IsMarkedForDeletion() && !a_ref.IsDisabled()) {
