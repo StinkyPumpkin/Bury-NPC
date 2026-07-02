@@ -6,9 +6,14 @@
 
 namespace
 {
-	constexpr SkyPromptAPI::EventID PROMPT_EVENT_ID = 47312;
+	// SkyPrompt groups prompts that share an eventID into ONE row (they overlap
+	// at the same slot). Distinct eventIDs put each prompt on its own row so all
+	// three stack and stay visible. actionID still distinguishes them in
+	// ProcessEvent.
+	constexpr SkyPromptAPI::EventID EVENT_LAY = 47312;
+	constexpr SkyPromptAPI::EventID EVENT_BURY = 47313;
+	constexpr SkyPromptAPI::EventID EVENT_COLLECT = 47314;
 
-	// actionIDs distinguish the prompts inside ProcessEvent.
 	constexpr SkyPromptAPI::ActionID ACTION_LAY = 0;
 	constexpr SkyPromptAPI::ActionID ACTION_BURY = 1;
 	constexpr SkyPromptAPI::ActionID ACTION_COLLECT = 2;
@@ -32,7 +37,7 @@ namespace
 		{
 			// Lay to Rest — hold.
 			m_prompts[0].text = "Lay to Rest";
-			m_prompts[0].eventID = PROMPT_EVENT_ID;
+			m_prompts[0].eventID = EVENT_LAY;
 			m_prompts[0].actionID = ACTION_LAY;
 			m_prompts[0].type = SkyPromptAPI::PromptType::kHold;
 			m_prompts[0].refid = 0;
@@ -41,7 +46,7 @@ namespace
 
 			// Bury with Gravestone — hold.
 			m_prompts[1].text = "Bury with Gravestone";
-			m_prompts[1].eventID = PROMPT_EVENT_ID;
+			m_prompts[1].eventID = EVENT_BURY;
 			m_prompts[1].actionID = ACTION_BURY;
 			m_prompts[1].type = SkyPromptAPI::PromptType::kHold;
 			m_prompts[1].refid = 0;
@@ -50,7 +55,7 @@ namespace
 
 			// Pick Up Body — hold (humanoid corpses only).
 			m_prompts[2].text = "Pick Up Body";
-			m_prompts[2].eventID = PROMPT_EVENT_ID;
+			m_prompts[2].eventID = EVENT_COLLECT;
 			m_prompts[2].actionID = ACTION_COLLECT;
 			m_prompts[2].type = SkyPromptAPI::PromptType::kHold;
 			m_prompts[2].refid = 0;
