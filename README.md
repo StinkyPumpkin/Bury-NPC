@@ -7,9 +7,11 @@ pile) and:
 - **Hold F → Lay to Rest** — plays the turn-undead sound and removes the body
   (no explosion — removed from the original).
 - **Hold R → Bury with Gravestone** — pick a memorial category (Friend /
-  Stranger / Foe), places a *Pay Your Respects* gravestone at the body engraved
-  with the deceased's **display name** (Real Names / any rename mod shows
-  correctly) and a memorial line, then removes the body.
+  Stranger / Foe), places a gravestone (ships in `PressFCorpses.esp`) at the
+  body inscribed with the deceased's **display name** (Real Names / any rename
+  mod shows correctly) + a memorial line, then removes the body. The
+  inscription is the grave's crosshair name — fully self-contained, no Pay Your
+  Respects needed.
 - **Hold T → Pick Up Body** *(dead humanoids only)* — carry the corpse as an
   inventory item named "<Name>'s body" (weight = body + its gear). Drop the
   item to set the body back down where you dropped it. This reimplements the
@@ -25,13 +27,11 @@ pile) and:
 ## Requirements
 
 - **SkyPrompt** (the prompt framework)
-- **Pay Your Respects SSE** — provides the grave activator + engraving script
-  that the Bury option reuses. Its own MCM / perk-activation are not used by
-  this fork; only the grave form is borrowed.
-- **PressFCorpses.esp** — ships in this mod folder. It is an ESL-flagged plugin
-  holding 50 corpse-token MiscObjects + a hidden holding cell used by the
-  pick-up feature. **Enable it in your plugin list** or pick-up stays disabled
-  (Lay/Bury still work without it).
+- **PressFCorpses.esp** — ships in this mod folder. ESL-flagged, holding 50
+  corpse-token MiscObjects + a hidden holding cell (pick-up) + the grave
+  activator (bury). **Enable it in your plugin list** or both Pick Up and Bury
+  stay disabled (Lay to Rest still works without it). No other plugins needed —
+  Pay Your Respects is **not** required.
 - Disable the original *Press F To Pay Respects* AND *Collect Bodies* — this
   replaces both.
 
