@@ -13,11 +13,11 @@ pile) and:
   inscription is the grave's crosshair name. Cancel the box (Esc) to leave the
   body untouched. The text box uses **UIExtensions** (near-universal); without
   it, the grave is placed with the name only.
-- **Destroy a grave** — look at a grave you placed, **hold the reveal modifier**
-  (default Left Shift) and a "Destroy Grave" hold-prompt appears; **hold the
-  destroy key** (default R) to dig it out. The prompt stays hidden until you
-  hold the modifier, so it never clutters the epitaph. Only affects graves this
-  mod placed.
+- **Destroy a grave** — look at a grave you placed, **hold Shift** (the reveal
+  modifier) and a "Destroy Grave" hold-prompt appears; **hold E** to dig it out
+  (Shift+E). The prompt stays hidden until you hold Shift, so it never clutters
+  the epitaph. Only affects graves this mod placed. Keys configurable
+  (`graveDestroyModifier` / `graveDestroyKey`).
 - **Hold T → Pick Up Body** *(dead humanoids only)* — carry the corpse as an
   inventory item named "<Name>'s body" (weight = body + its gear). Drop the
   item to set the body back down where you dropped it. This reimplements the
