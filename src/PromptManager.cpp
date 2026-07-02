@@ -142,7 +142,11 @@ namespace
 		if (!PFR::Settings::GetSingleton().graveDestroyEnabled.load()) return;
 		RE::FormID graveID = g_currentGraveID.load();
 		if (graveID == 0) return;
-		g_graveSink.m_prompt.refid = graveID;
+		// refid 0 = not anchored to the grave's on-screen position (a grave sits
+		// on the ground, which would drag the prompt to the bottom of the
+		// screen / off the left edge).  With 0 it renders at the theme's fixed
+		// centre.  We track the target grave in g_currentGraveID, not refid.
+		g_graveSink.m_prompt.refid = 0;
 		(void)SkyPromptAPI::SendPrompt(&g_graveSink, g_clientID);
 		g_graveShowing.store(true);
 	}
