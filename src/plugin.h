@@ -2,6 +2,6 @@
 
 namespace Plugin
 {
-	inline constexpr auto NAME = "PressFtoPayRespects";
+	inline constexpr auto NAME = "BuryTakeBodies";
 	inline constexpr auto VERSION = "1.4.2.0";
 }
