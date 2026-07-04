@@ -287,7 +287,7 @@ void PromptManager::Init()
 		idm->AddEventSink(&ModifierInputSink::GetSingleton());
 	}
 
-	(void)SkyPromptAPI::RequestTheme(g_clientID, "PressFtoPayRespects");
+	(void)SkyPromptAPI::RequestTheme(g_clientID, "BuryTakeBodies");
 	logger::info("PromptManager: init clientID={} (Lay=kb{} / Bury=kb{})",
 		g_clientID,
 		PFR::Settings::GetSingleton().layKeyboard.load(),

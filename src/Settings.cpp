@@ -11,7 +11,7 @@ namespace PFR
 
 	void Settings::Load()
 	{
-		const wchar_t* path = L"Data/SKSE/Plugins/PressFtoPayRespects.ini";
+		const wchar_t* path = L"Data/SKSE/Plugins/BuryTakeBodies.ini";
 
 		CSimpleIniA ini;
 		ini.SetUnicode();

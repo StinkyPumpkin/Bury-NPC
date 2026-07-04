@@ -1,8 +1,10 @@
-# Press F To Pay Respects — Claude fork
+# Bury & Take Bodies
 
-A full-C++ SKSE fork of *Press F To Pay Respects* that adds a **bury option**
-and a **pick-up-body option** via SkyPrompt. Look at any dead body (or ash
-pile) and:
+A full-C++ SKSE mod (plugin identity `BuryTakeBodies`) that lets you deal with
+corpses via SkyPrompt — lay to rest, bury with a custom-engraved gravestone, or
+pick the body up and carry it. Inspired by *Press F To Pay Respects* and
+*Collect Bodies*, but fully independent (own plugin/DLL/theme, no shared assets).
+Look at any dead body (or ash pile) and:
 
 - **Hold F → Lay to Rest** — plays the turn-undead sound and removes the body
   (no explosion — removed from the original).
@@ -53,7 +55,7 @@ added to the player, renamed after the body. On drop, a `TESContainerChanged`
 sink teleports the body back to the dropped token, deletes the token, and frees
 the slot. Cap: 50 simultaneously-carried bodies.
 
-## Config — `SKSE/Plugins/PressFtoPayRespects.ini`
+## Config — `SKSE/Plugins/BuryTakeBodies.ini`
 
 - `[Hotkeys]` `layToRestKeyboard` (default 33 = F), `buryKeyboard`
   (default 19 = R), `collectKeyboard` (default 20 = T), plus gamepad variants
