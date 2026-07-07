@@ -3,6 +3,7 @@
 #include "Settings.h"
 #include "RespectManager.h"
 #include "PickupManager.h"
+#include "QuickLootAPI.h"
 
 namespace
 {
@@ -29,51 +30,109 @@ namespace
 	std::atomic<RE::FormID>   g_currentGraveID{ 0 };
 	std::atomic<bool>         g_graveShowing{ false };
 
+	// Reveal modifier (Shift) currently held, and whether we currently owe
+	// QuickLoot an EnableLootMenu() to undo a DisableLootMenu().
+	std::atomic<bool>         g_modifierHeld{ false };
+	std::atomic<bool>         g_lootDisabled{ false };
+	bool                      g_hasQuickLoot = false;
+
 	// One key-pair (keyboard, gamepad) per action.
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_layKeys[2];
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_buryKeys[2];
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_collectKeys[2];
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_graveKeys[2];
 
+	// ------------------------------------------------------------------
+	// QuickLoot IE integration — hide its loot menu while our prompts show.
+	// (The public API is the static class QuickLoot::API::QuickLootAPI.)
+	// ------------------------------------------------------------------
+	using QLApi = QuickLoot::API::QuickLootAPI;
+
+	void DisableQuickLoot()
+	{
+		if (g_hasQuickLoot && !g_lootDisabled.exchange(true)) {
+			QLApi::DisableLootMenu();
+		}
+	}
+
+	void EnableQuickLoot()
+	{
+		if (g_hasQuickLoot && g_lootDisabled.exchange(false)) {
+			QLApi::EnableLootMenu();
+		}
+	}
+
+	// Backstop: refuse to open the loot menu while we've suppressed it (covers a
+	// re-open race between DisableLootMenu and the crosshair re-evaluating).
+	void OnOpeningLootMenu(QuickLoot::API::Events::OpeningLootMenuEvent* a_event)
+	{
+		if (a_event && g_lootDisabled.load()) {
+			a_event->result = QuickLoot::API::Events::HandleResult::kStop;
+		}
+	}
+
 	struct RespectPromptSink : public SkyPromptAPI::PromptSink
 	{
-		SkyPromptAPI::Prompt m_prompts[3];
-		// How many prompts to expose right now (2 = Lay+Bury, 3 = +Pick Up).
-		std::atomic<std::uint8_t> m_promptCount{ 2 };
+		// Fixed templates (identity + keys). 0 = Lay, 1 = Bury, 2 = Pick Up.
+		SkyPromptAPI::Prompt m_templates[3];
+		// The active subset, packed contiguously (Bury drops out without a
+		// shovel, Pick Up without a humanoid corpse), rebuilt each show.
+		SkyPromptAPI::Prompt m_visible[3];
+		std::atomic<std::uint8_t> m_promptCount{ 1 };
 
 		RespectPromptSink()
 		{
 			// Lay to Rest — hold.
-			m_prompts[0].text = "Lay to Rest";
-			m_prompts[0].eventID = EVENT_LAY;
-			m_prompts[0].actionID = ACTION_LAY;
-			m_prompts[0].type = SkyPromptAPI::PromptType::kHold;
-			m_prompts[0].refid = 0;
-			m_prompts[0].text_color = 0xFFFFFFFF;
-			m_prompts[0].progress = 0.0f;
+			m_templates[0].text = "Lay to Rest";
+			m_templates[0].eventID = EVENT_LAY;
+			m_templates[0].actionID = ACTION_LAY;
+			m_templates[0].type = SkyPromptAPI::PromptType::kHold;
+			m_templates[0].refid = 0;
+			m_templates[0].text_color = 0xFFFFFFFF;
+			m_templates[0].progress = 0.0f;
 
 			// Bury with Gravestone — hold.
-			m_prompts[1].text = "Bury with Gravestone";
-			m_prompts[1].eventID = EVENT_BURY;
-			m_prompts[1].actionID = ACTION_BURY;
-			m_prompts[1].type = SkyPromptAPI::PromptType::kHold;
-			m_prompts[1].refid = 0;
-			m_prompts[1].text_color = 0xFFFFFFFF;
-			m_prompts[1].progress = 0.0f;
+			m_templates[1].text = "Bury with Gravestone";
+			m_templates[1].eventID = EVENT_BURY;
+			m_templates[1].actionID = ACTION_BURY;
+			m_templates[1].type = SkyPromptAPI::PromptType::kHold;
+			m_templates[1].refid = 0;
+			m_templates[1].text_color = 0xFFFFFFFF;
+			m_templates[1].progress = 0.0f;
 
 			// Pick Up Body — hold (humanoid corpses only).
-			m_prompts[2].text = "Pick Up Body";
-			m_prompts[2].eventID = EVENT_COLLECT;
-			m_prompts[2].actionID = ACTION_COLLECT;
-			m_prompts[2].type = SkyPromptAPI::PromptType::kHold;
-			m_prompts[2].refid = 0;
-			m_prompts[2].text_color = 0xFFFFFFFF;
-			m_prompts[2].progress = 0.0f;
+			m_templates[2].text = "Pick Up Body";
+			m_templates[2].eventID = EVENT_COLLECT;
+			m_templates[2].actionID = ACTION_COLLECT;
+			m_templates[2].type = SkyPromptAPI::PromptType::kHold;
+			m_templates[2].refid = 0;
+			m_templates[2].text_color = 0xFFFFFFFF;
+			m_templates[2].progress = 0.0f;
+		}
+
+		// Pack the active prompts into m_visible in a stable order.
+		void BuildVisible(RE::FormID a_refID, bool a_wantBury, bool a_wantCollect)
+		{
+			std::uint8_t n = 0;
+			m_visible[n] = m_templates[0];  // Lay always
+			m_visible[n].refid = a_refID;
+			++n;
+			if (a_wantBury) {
+				m_visible[n] = m_templates[1];
+				m_visible[n].refid = a_refID;
+				++n;
+			}
+			if (a_wantCollect) {
+				m_visible[n] = m_templates[2];
+				m_visible[n].refid = a_refID;
+				++n;
+			}
+			m_promptCount.store(n);
 		}
 
 		std::span<const SkyPromptAPI::Prompt> GetPrompts() const override
 		{
-			return std::span<const SkyPromptAPI::Prompt>(m_prompts, m_promptCount.load());
+			return std::span<const SkyPromptAPI::Prompt>(m_visible, m_promptCount.load());
 		}
 
 		void ProcessEvent(SkyPromptAPI::PromptEvent a_event) const override
@@ -98,6 +157,26 @@ namespace
 	};
 
 	RespectPromptSink g_sink;
+
+	// Send / hide the body prompt set, keeping QuickLoot in sync.
+	void SendBodyPrompt(bool a_disableLoot)
+	{
+		if (g_clientID == 0) return;
+		if (!g_showing.load()) {
+			(void)SkyPromptAPI::SendPrompt(&g_sink, g_clientID);
+			g_showing.store(true);
+		}
+		if (a_disableLoot) DisableQuickLoot();
+	}
+
+	void HideBodyPrompt()
+	{
+		if (g_showing.load()) {
+			SkyPromptAPI::RemovePrompt(&g_sink, g_clientID);
+			g_showing.store(false);
+		}
+		EnableQuickLoot();
+	}
 
 	// ------------------------------------------------------------------
 	// Destroy Grave — a one-prompt sink shown only while the modifier is held
@@ -159,10 +238,10 @@ namespace
 		}
 	}
 
-	// Tracks the reveal modifier: a fresh modifier press while looking at a
-	// grave reveals the Destroy Grave prompt; releasing hides it.  (Requiring a
-	// fresh press means walking up while already holding the key — e.g.
-	// sprinting — does not surprise-reveal it.)
+	// Tracks the reveal modifier.  While it is held it reveals whichever prompt
+	// set matches the current crosshair target: the Lay/Bury/PickUp buttons on a
+	// corpse (and hides QuickLoot), or the Destroy Grave prompt on one of our
+	// graves.  Releasing hides them again.
 	class ModifierInputSink : public RE::BSTEventSink<RE::InputEvent*>
 	{
 	public:
@@ -176,8 +255,8 @@ namespace
 			RE::BSTEventSource<RE::InputEvent*>*) override
 		{
 			if (!a_events) return RE::BSEventNotifyControl::kContinue;
-			const auto modKey = static_cast<std::uint32_t>(
-				PFR::Settings::GetSingleton().graveDestroyModifier.load());
+			auto& s = PFR::Settings::GetSingleton();
+			const auto modKey = static_cast<std::uint32_t>(s.graveDestroyModifier.load());
 
 			for (auto* e = *a_events; e; e = e->next) {
 				if (e->GetEventType() != RE::INPUT_EVENT_TYPE::kButton) continue;
@@ -186,8 +265,15 @@ namespace
 				if (btn->GetIDCode() != modKey) continue;
 
 				if (btn->IsDown()) {
-					if (g_currentGraveID.load() != 0) SendGravePrompt();
+					g_modifierHeld.store(true);
+					if (g_currentRefID.load() != 0 && s.shiftGatesPrompts.load()) {
+						SendBodyPrompt(true);
+					} else if (g_currentGraveID.load() != 0) {
+						SendGravePrompt();
+					}
 				} else if (btn->IsUp()) {
+					g_modifierHeld.store(false);
+					if (s.shiftGatesPrompts.load()) HideBodyPrompt();
 					RemoveGravePrompt();
 				}
 			}
@@ -211,11 +297,11 @@ namespace
 		g_collectKeys[1] = { RE::INPUT_DEVICE::kGamepad,
 			static_cast<SkyPromptAPI::ButtonID>(s.collectGamepad.load()) };
 
-		g_sink.m_prompts[0].button_key =
+		g_sink.m_templates[0].button_key =
 			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_layKeys, 2);
-		g_sink.m_prompts[1].button_key =
+		g_sink.m_templates[1].button_key =
 			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_buryKeys, 2);
-		g_sink.m_prompts[2].button_key =
+		g_sink.m_templates[2].button_key =
 			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_collectKeys, 2);
 
 		// The Destroy Grave prompt fills on the execute key (held while the
@@ -280,6 +366,14 @@ void PromptManager::Init()
 
 	BuildButtonKeys();
 
+	// Connect to QuickLoot IE (optional) so we can hide its loot menu while the
+	// Shift-revealed action prompts are up.
+	g_hasQuickLoot = QLApi::Init("BuryTakeBodies");
+	if (g_hasQuickLoot) {
+		QLApi::RegisterOpeningLootMenuHandler(OnOpeningLootMenu);
+	}
+	logger::info("PromptManager: QuickLoot API {}", g_hasQuickLoot ? "connected" : "not found");
+
 	if (auto* crosshairSrc = SKSE::GetCrosshairRefEventSource()) {
 		crosshairSrc->AddEventSink(&CrosshairSink::GetSingleton());
 	}
@@ -288,19 +382,19 @@ void PromptManager::Init()
 	}
 
 	(void)SkyPromptAPI::RequestTheme(g_clientID, "BuryTakeBodies");
-	logger::info("PromptManager: init clientID={} (Lay=kb{} / Bury=kb{})",
+	logger::info("PromptManager: init clientID={} (Lay=kb{} / Bury=kb{}) shiftGated={}",
 		g_clientID,
 		PFR::Settings::GetSingleton().layKeyboard.load(),
-		PFR::Settings::GetSingleton().buryKeyboard.load());
+		PFR::Settings::GetSingleton().buryKeyboard.load(),
+		PFR::Settings::GetSingleton().shiftGatesPrompts.load());
 }
 
 void PromptManager::Shutdown()
 {
-	if (g_showing.load()) {
-		SkyPromptAPI::RemovePrompt(&g_sink, g_clientID);
-		g_showing.store(false);
-	}
+	HideBodyPrompt();
+	g_currentRefID.store(0);
 	RemoveGravePrompt();
+	EnableQuickLoot();
 	if (auto* crosshairSrc = SKSE::GetCrosshairRefEventSource()) {
 		crosshairSrc->RemoveEventSink(&CrosshairSink::GetSingleton());
 	}
@@ -318,20 +412,30 @@ void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 	RemoveGravePrompt();
 
 	RE::FormID refID = a_ref->GetFormID();
+
+	// If the crosshair moved to a different corpse, drop the old prompt set so
+	// we can rebuild it (Bury/PickUp availability may differ).
+	if (g_currentRefID.load() != refID) {
+		HideBodyPrompt();
+	}
 	g_currentRefID.store(refID);
 
-	// Show the Pick Up prompt only on dead humanoids, and only if enabled.
-	const bool canCollect = PFR::Settings::GetSingleton().collectEnabled.load() &&
-		PickupManager::CanCollect(a_ref);
-	const std::uint8_t count = canCollect ? 3 : 2;
+	auto& s = PFR::Settings::GetSingleton();
 
-	for (std::uint8_t i = 0; i < count; ++i) {
-		g_sink.m_prompts[i].refid = refID;
+	// Bury needs a shovel (unless disabled); Pick Up needs a humanoid corpse.
+	const bool wantBury = !s.buryRequiresShovel.load() || RespectManager::PlayerHasShovel();
+	const bool wantCollect = s.collectEnabled.load() && PickupManager::CanCollect(a_ref);
+	g_sink.BuildVisible(refID, wantBury, wantCollect);
+
+	if (!s.shiftGatesPrompts.load()) {
+		// Legacy behaviour: always show the prompts, leave QuickLoot alone.
+		SendBodyPrompt(false);
+	} else if (g_modifierHeld.load()) {
+		// Modifier already held as we look at the corpse — reveal immediately.
+		SendBodyPrompt(true);
 	}
-	g_sink.m_promptCount.store(count);
-
-	(void)SkyPromptAPI::SendPrompt(&g_sink, g_clientID);
-	g_showing.store(true);
+	// Otherwise the prompts stay hidden until the reveal modifier is pressed
+	// (ModifierInputSink), so QuickLoot shows by default.
 }
 
 void PromptManager::ShowGraveForRef(RE::TESObjectREFR* a_ref)
@@ -340,11 +444,8 @@ void PromptManager::ShowGraveForRef(RE::TESObjectREFR* a_ref)
 	if (!PFR::Settings::GetSingleton().graveDestroyEnabled.load()) return;
 
 	// Grave and body prompts are mutually exclusive.
-	if (g_showing.load()) {
-		SkyPromptAPI::RemovePrompt(&g_sink, g_clientID);
-		g_showing.store(false);
-		g_currentRefID.store(0);
-	}
+	HideBodyPrompt();
+	g_currentRefID.store(0);
 
 	// Just note which grave we're on — the Destroy Grave prompt itself only
 	// appears when the reveal modifier is pressed (ModifierInputSink), so the
@@ -354,11 +455,8 @@ void PromptManager::ShowGraveForRef(RE::TESObjectREFR* a_ref)
 
 void PromptManager::Hide()
 {
-	if (g_showing.load()) {
-		SkyPromptAPI::RemovePrompt(&g_sink, g_clientID);
-		g_showing.store(false);
-		g_currentRefID.store(0);
-	}
+	HideBodyPrompt();
+	g_currentRefID.store(0);
 	g_currentGraveID.store(0);
 	RemoveGravePrompt();
 }

@@ -12,6 +12,10 @@ namespace
 	RE::TESBoundObject*         g_graveActivator = nullptr;
 	bool                        g_hasUIExtensions = false;
 
+	// Vanilla shovels (Skyrim.esm) — gate the Bury prompt/action.
+	RE::TESBoundObject*         g_shovel1 = nullptr;  // Shovel01 0xF5D05
+	RE::TESBoundObject*         g_shovel2 = nullptr;  // Shovel02 0xF5D06
+
 	// ------------------------------------------------------------------
 	// Bury-in-progress state.  Bury pops a UIExtensions text-entry box; the
 	// typed message arrives via a SKSE mod event and the grave is placed when
@@ -239,6 +243,9 @@ namespace RespectManager
 		if (dh) {
 			g_graveActivator = dh->LookupForm<RE::TESObjectACTI>(0x000834, "BuryTakeBodies.esp");
 			g_hasUIExtensions = dh->LookupModByName("UIExtensions.esp") != nullptr;
+			// Vanilla shovels — MiscObjects in Skyrim.esm (named "Shovel").
+			g_shovel1 = dh->LookupForm<RE::TESObjectMISC>(0x00F5D05, "Skyrim.esm");
+			g_shovel2 = dh->LookupForm<RE::TESObjectMISC>(0x00F5D06, "Skyrim.esm");
 		}
 
 		BuryDialogSink::GetSingleton().Register();
@@ -251,6 +258,23 @@ namespace RespectManager
 			logger::warn("RespectManager: BuryTakeBodies.esp grave activator not found — "
 				"enable BuryTakeBodies.esp for the Bury option");
 		}
+	}
+
+	bool PlayerHasShovel()
+	{
+		if (!g_shovel1 && !g_shovel2) return false;
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player) return false;
+		auto counts = player->GetInventoryCounts();
+		if (g_shovel1) {
+			auto it = counts.find(g_shovel1);
+			if (it != counts.end() && it->second > 0) return true;
+		}
+		if (g_shovel2) {
+			auto it = counts.find(g_shovel2);
+			if (it != counts.end() && it->second > 0) return true;
+		}
+		return false;
 	}
 
 	void ExecuteLayToRest(RE::FormID a_refID)

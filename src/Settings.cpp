@@ -48,6 +48,11 @@ namespace PFR
 		useDisplayName.store(
 			ini.GetBoolValue("Grave", "useDisplayName", useDisplayName.load()));
 
+		buryRequiresShovel.store(
+			ini.GetBoolValue("Bury", "requiresShovel", buryRequiresShovel.load()));
+		shiftGatesPrompts.store(
+			ini.GetBoolValue("General", "shiftGatesPrompts", shiftGatesPrompts.load()));
+
 		logger::info(
 			"Settings: layKB={} buryKB={} collectKB={} collectEnabled={} "
 			"useDisplayName={} debug={}",
