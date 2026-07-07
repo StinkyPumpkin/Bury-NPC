@@ -16,6 +16,10 @@ namespace RespectManager
 	// the body.  DeadName uses GetDisplayName() so Real Names shows.
 	void ExecuteBury(RE::FormID a_refID);
 
+	// True if the player carries a vanilla shovel (Shovel01 0xF5D05 /
+	// Shovel02 0xF5D06 in Skyrim.esm).  Gates the Bury prompt.
+	bool PlayerHasShovel();
+
 	// True if the ref is a gravestone THIS mod placed (base == our grave
 	// activator).  Used to show the Destroy Grave prompt only on our graves.
 	bool IsOurGrave(RE::TESObjectREFR* a_ref);

@@ -35,6 +35,18 @@ namespace PFR
 		// ("Bandit") like stock Pay Your Respects.
 		std::atomic<bool> useDisplayName{ true };
 
+		// Bury requires a vanilla shovel (Shovel01 0xF5D05 / Shovel02 0xF5D06)
+		// in the player's inventory.  The Bury prompt is hidden without one;
+		// Lay to Rest and Pick Up Body are unaffected.
+		std::atomic<bool> buryRequiresShovel{ true };
+
+		// Gate the corpse action prompts behind the reveal modifier (Shift):
+		// with this ON, a corpse shows QuickLoot by default and our
+		// Lay/Bury/PickUp prompts appear only WHILE the modifier is held (which
+		// also hides QuickLoot).  OFF = old behaviour (prompts always shown,
+		// QuickLoot left alone).  Reuses graveDestroyModifier as the key.
+		std::atomic<bool> shiftGatesPrompts{ true };
+
 	private:
 		Settings() = default;
 	};
