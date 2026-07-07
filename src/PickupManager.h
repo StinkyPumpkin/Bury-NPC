@@ -8,7 +8,7 @@ namespace PickupManager
 	void RegisterSerialization();
 
 	// Called on kDataLoaded — enumerates the corpse MiscObject slots + the
-	// holding-cell marker from PressFCorpses.esp, caches ActorTypeNPC, and
+	// holding-cell marker from BuryTakeBodies.esp, caches ActorTypeNPC, and
 	// installs the container-changed sink used to detect drops.
 	void Init();
 

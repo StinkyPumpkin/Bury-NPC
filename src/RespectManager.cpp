@@ -233,11 +233,11 @@ namespace RespectManager
 		g_cleanupCell = RE::TESForm::LookupByEditorID<RE::TESObjectCELL>("WIDeadBodyCleanupCell");
 		g_soundForm = RE::TESForm::LookupByID<RE::BGSSoundDescriptorForm>(0x00057C65);
 
-		// Grave activator ships in PressFCorpses.esp (PFR_GraveActivator, 0x834)
+		// Grave activator ships in BuryTakeBodies.esp (PFR_GraveActivator, 0x834)
 		// — no Pay Your Respects dependency.
 		auto* dh = RE::TESDataHandler::GetSingleton();
 		if (dh) {
-			g_graveActivator = dh->LookupForm<RE::TESObjectACTI>(0x000834, "PressFCorpses.esp");
+			g_graveActivator = dh->LookupForm<RE::TESObjectACTI>(0x000834, "BuryTakeBodies.esp");
 			g_hasUIExtensions = dh->LookupModByName("UIExtensions.esp") != nullptr;
 		}
 
@@ -248,8 +248,8 @@ namespace RespectManager
 			g_hasUIExtensions);
 
 		if (!g_graveActivator) {
-			logger::warn("RespectManager: PressFCorpses.esp grave activator not found — "
-				"enable PressFCorpses.esp for the Bury option");
+			logger::warn("RespectManager: BuryTakeBodies.esp grave activator not found — "
+				"enable BuryTakeBodies.esp for the Bury option");
 		}
 	}
 
@@ -279,7 +279,7 @@ namespace RespectManager
 		if (!IsValidCorpse(ref)) return;
 
 		if (!g_graveActivator) {
-			RE::DebugNotification("Bury needs PressFCorpses.esp enabled.");
+			RE::DebugNotification("Bury needs BuryTakeBodies.esp enabled.");
 			return;
 		}
 

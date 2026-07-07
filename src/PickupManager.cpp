@@ -10,7 +10,7 @@ namespace
 	// ------------------------------------------------------------------
 	// The corpse-carry system.
 	//
-	// PressFCorpses.esp ships 50 distinct MiscObject "corpse" tokens plus one
+	// BuryTakeBodies.esp ships 50 distinct MiscObject "corpse" tokens plus one
 	// holding-cell marker.  Distinct base forms are what let each carried body
 	// keep its OWN name + weight in the inventory (a single shared form can't).
 	//
@@ -24,7 +24,7 @@ namespace
 	// "name resets to Collected Corpse / weight 1 after reload" bug.
 	// ------------------------------------------------------------------
 
-	constexpr const char* kPlugin        = "PressFCorpses.esp";
+	constexpr const char* kPlugin        = "BuryTakeBodies.esp";
 	constexpr RE::FormID  kMarkerLocalID = 0x801;      // PFR_HoldingMarker
 	constexpr RE::FormID  kFirstCorpse   = 0x802;      // PFR_Corpse01
 	constexpr RE::FormID  kActorTypeNPC  = 0x00013794; // Skyrim.esm keyword
@@ -324,7 +324,7 @@ namespace PickupManager
 			g_slots.size(), g_marker != nullptr, g_actorTypeNPC != nullptr);
 
 		if (g_slots.empty() || !g_marker) {
-			logger::warn("Pickup: PressFCorpses.esp not found/loaded — pick-up disabled");
+			logger::warn("Pickup: BuryTakeBodies.esp not found/loaded — pick-up disabled");
 		}
 	}
 
@@ -349,7 +349,7 @@ namespace PickupManager
 		if (!actor || !actor->IsDead()) return;
 
 		if (!g_marker) {
-			RE::DebugNotification("Corpse storage missing (PressFCorpses.esp not loaded).");
+			RE::DebugNotification("Corpse storage missing (BuryTakeBodies.esp not loaded).");
 			return;
 		}
 
