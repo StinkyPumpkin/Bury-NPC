@@ -46,10 +46,10 @@ namespace PFR
 		std::atomic<float> buryAnimationDelay{ 4.0f };  // seconds the dig plays
 
 		// Gate the corpse action prompts behind the reveal modifier (Shift):
-		// with this ON, a corpse shows QuickLoot by default and our
-		// Lay/Bury/PickUp prompts appear only WHILE the modifier is held (which
-		// also hides QuickLoot).  OFF = old behaviour (prompts always shown,
-		// QuickLoot left alone).  Reuses graveDestroyModifier as the key.
+		// with this ON, the Lay/Bury/PickUp prompts appear only WHILE the modifier
+		// is held — so a corpse shows just its default (e.g. a loot-menu mod) until
+		// you hold Shift.  OFF = prompts always shown on a corpse.  Reuses
+		// graveDestroyModifier as the key.
 		std::atomic<bool> shiftGatesPrompts{ true };
 
 	private:
