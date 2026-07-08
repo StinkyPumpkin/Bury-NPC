@@ -10,17 +10,20 @@ namespace
 	// at the same slot). Distinct eventIDs put each prompt on its own row so all
 	// three stack and stay visible. actionID still distinguishes them in
 	// ProcessEvent.
-	constexpr SkyPromptAPI::EventID EVENT_LAY = 47312;
-	constexpr SkyPromptAPI::EventID EVENT_BURY = 47313;
-	constexpr SkyPromptAPI::EventID EVENT_COLLECT = 47314;
+	// Two PAIRED prompts, each a kHold prompt. SkyPrompt sends the sink kDown on
+	// press, kAccepted only once the hold bar fills, and kUp on release. A quick
+	// TAP releases before the bar fills → kUp with NO kAccepted = the primary
+	// action; a HOLD fills the bar → kAccepted = the secondary action. (Confirmed
+	// against SkyPrompt src: Hooks.cpp ProcessInput + Renderer.cpp UpdateProgressCircle.)
+	//   Pair A (default F): tap = Lay to Rest, hold = Bury with Gravestone
+	//   Pair B (default E): tap = Resurrect,   hold = Take Body
+	constexpr SkyPromptAPI::EventID EVENT_PAIR_A = 47312;
+	constexpr SkyPromptAPI::EventID EVENT_PAIR_B = 47316;
 	constexpr SkyPromptAPI::EventID EVENT_DESTROY = 47315;
-	constexpr SkyPromptAPI::EventID EVENT_RESURRECT = 47316;
 
-	constexpr SkyPromptAPI::ActionID ACTION_LAY = 0;
-	constexpr SkyPromptAPI::ActionID ACTION_BURY = 1;
-	constexpr SkyPromptAPI::ActionID ACTION_COLLECT = 2;
+	constexpr SkyPromptAPI::ActionID ACTION_PAIR_A = 0;
+	constexpr SkyPromptAPI::ActionID ACTION_PAIR_B = 1;
 	constexpr SkyPromptAPI::ActionID ACTION_DESTROY = 3;
-	constexpr SkyPromptAPI::ActionID ACTION_RESURRECT = 4;
 
 	SkyPromptAPI::ClientID    g_clientID = 0;
 	std::atomic<bool>         g_showing{ false };
@@ -34,83 +37,57 @@ namespace
 	// Reveal modifier (Shift) currently held.
 	std::atomic<bool>         g_modifierHeld{ false };
 
-	// One key-pair (keyboard, gamepad) per action.
-	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_layKeys[2];
-	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_buryKeys[2];
-	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_collectKeys[2];
-	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_resurrectKeys[2];
+	// One key-pair (keyboard, gamepad) per PROMPT. Pair A = Lay/Bury key,
+	// Pair B = Resurrect/Take key.
+	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_pairAKeys[2];
+	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_pairBKeys[2];
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_graveKeys[2];
+
+	// Tap-vs-hold state per pair: kAccepted (hold bar filled) sets it; kUp
+	// reads-and-clears it — a release with the flag still false was a TAP.
+	std::atomic<bool> g_holdFiredA{ false };
+	std::atomic<bool> g_holdFiredB{ false };
 
 	struct RespectPromptSink : public SkyPromptAPI::PromptSink
 	{
-		// Fixed templates (identity + keys). 0 = Lay, 1 = Bury, 2 = Pick Up,
-		// 3 = Resurrect.
-		SkyPromptAPI::Prompt m_templates[4];
-		// The active subset, packed contiguously (Bury drops out without a
-		// shovel, Pick Up without a humanoid corpse, Resurrect when disabled),
-		// rebuilt each show.
-		SkyPromptAPI::Prompt m_visible[4];
+		// Two paired kHold templates. A = Lay(tap)/Bury(hold) on the Lay key,
+		// B = Resurrect(tap)/Take(hold) on the Resurrect key. B drops out on an
+		// ash pile (nothing to resurrect); rebuilt each show.
+		SkyPromptAPI::Prompt m_templates[2];
+		SkyPromptAPI::Prompt m_visible[2];
 		std::atomic<std::uint8_t> m_promptCount{ 1 };
 
 		RespectPromptSink()
 		{
-			// Lay to Rest — hold.
-			m_templates[0].text = "Lay to Rest";
-			m_templates[0].eventID = EVENT_LAY;
-			m_templates[0].actionID = ACTION_LAY;
+			// Pair A — tap: Lay to Rest, hold: Bury with Gravestone.
+			m_templates[0].text = "Lay to Rest  (hold: Bury)";
+			m_templates[0].eventID = EVENT_PAIR_A;
+			m_templates[0].actionID = ACTION_PAIR_A;
 			m_templates[0].type = SkyPromptAPI::PromptType::kHold;
 			m_templates[0].refid = 0;
 			m_templates[0].text_color = 0xFFFFFFFF;
 			m_templates[0].progress = 0.0f;
 
-			// Bury with Gravestone — hold.
-			m_templates[1].text = "Bury with Gravestone";
-			m_templates[1].eventID = EVENT_BURY;
-			m_templates[1].actionID = ACTION_BURY;
+			// Pair B — tap: Resurrect, hold: Take Body.
+			m_templates[1].text = "Resurrect  (hold: Take Body)";
+			m_templates[1].eventID = EVENT_PAIR_B;
+			m_templates[1].actionID = ACTION_PAIR_B;
 			m_templates[1].type = SkyPromptAPI::PromptType::kHold;
 			m_templates[1].refid = 0;
 			m_templates[1].text_color = 0xFFFFFFFF;
 			m_templates[1].progress = 0.0f;
-
-			// Pick Up Body — hold (humanoid corpses only).
-			m_templates[2].text = "Pick Up Body";
-			m_templates[2].eventID = EVENT_COLLECT;
-			m_templates[2].actionID = ACTION_COLLECT;
-			m_templates[2].type = SkyPromptAPI::PromptType::kHold;
-			m_templates[2].refid = 0;
-			m_templates[2].text_color = 0xFFFFFFFF;
-			m_templates[2].progress = 0.0f;
-
-			// Resurrect — hold (dead actors only).
-			m_templates[3].text = "Resurrect";
-			m_templates[3].eventID = EVENT_RESURRECT;
-			m_templates[3].actionID = ACTION_RESURRECT;
-			m_templates[3].type = SkyPromptAPI::PromptType::kHold;
-			m_templates[3].refid = 0;
-			m_templates[3].text_color = 0xFFFFFFFF;
-			m_templates[3].progress = 0.0f;
 		}
 
-		// Pack the active prompts into m_visible in a stable order.
-		void BuildVisible(RE::FormID a_refID, bool a_wantBury, bool a_wantCollect,
-			bool a_wantResurrect)
+		// Pair A always shows (Lay works on any corpse); Pair B shows only when
+		// the target can be resurrected (a dead actor, not an ash pile).
+		void BuildVisible(RE::FormID a_refID, bool a_wantB)
 		{
 			std::uint8_t n = 0;
-			m_visible[n] = m_templates[0];  // Lay always
+			m_visible[n] = m_templates[0];  // Pair A (Lay/Bury) always
 			m_visible[n].refid = a_refID;
 			++n;
-			if (a_wantBury) {
-				m_visible[n] = m_templates[1];
-				m_visible[n].refid = a_refID;
-				++n;
-			}
-			if (a_wantCollect) {
-				m_visible[n] = m_templates[2];
-				m_visible[n].refid = a_refID;
-				++n;
-			}
-			if (a_wantResurrect) {
-				m_visible[n] = m_templates[3];
+			if (a_wantB) {
+				m_visible[n] = m_templates[1];  // Pair B (Resurrect/Take)
 				m_visible[n].refid = a_refID;
 				++n;
 			}
@@ -122,26 +99,43 @@ namespace
 			return std::span<const SkyPromptAPI::Prompt>(m_visible, m_promptCount.load());
 		}
 
+		// Tap = a quick press+release (kUp arrives with no preceding kAccepted);
+		// hold = the bar fills (kAccepted). kDown resets the per-pair hold flag.
 		void ProcessEvent(SkyPromptAPI::PromptEvent a_event) const override
 		{
-			if (a_event.type != SkyPromptAPI::PromptEventType::kAccepted) {
-				return;
-			}
-			RE::FormID refID = g_currentRefID.load();
+			const RE::FormID refID = g_currentRefID.load();
 			if (refID == 0) return;
 
 			const auto action = a_event.prompt.actionID;
-			SKSE::GetTaskInterface()->AddTask([refID, action]() {
-				if (action == ACTION_BURY) {
-					RespectManager::ExecuteBury(refID);
-				} else if (action == ACTION_COLLECT) {
-					PickupManager::ExecuteCollect(refID);
-				} else if (action == ACTION_RESURRECT) {
-					RespectManager::ExecuteResurrect(refID);
-				} else {
-					RespectManager::ExecuteLayToRest(refID);
+			const auto etype  = a_event.type;
+			auto* task = SKSE::GetTaskInterface();
+			if (!task) return;
+
+			using ET = SkyPromptAPI::PromptEventType;
+
+			if (action == ACTION_PAIR_A) {
+				if (etype == ET::kDown) {
+					g_holdFiredA.store(false);
+				} else if (etype == ET::kAccepted) {          // hold → Bury
+					g_holdFiredA.store(true);
+					task->AddTask([refID]() { RespectManager::ExecuteBury(refID); });
+				} else if (etype == ET::kUp) {                // release
+					if (!g_holdFiredA.exchange(false)) {      // no hold fired → tap → Lay
+						task->AddTask([refID]() { RespectManager::ExecuteLayToRest(refID); });
+					}
 				}
-			});
+			} else if (action == ACTION_PAIR_B) {
+				if (etype == ET::kDown) {
+					g_holdFiredB.store(false);
+				} else if (etype == ET::kAccepted) {          // hold → Take Body
+					g_holdFiredB.store(true);
+					task->AddTask([refID]() { PickupManager::ExecuteCollect(refID); });
+				} else if (etype == ET::kUp) {                // release
+					if (!g_holdFiredB.exchange(false)) {      // no hold fired → tap → Resurrect
+						task->AddTask([refID]() { RespectManager::ExecuteResurrect(refID); });
+					}
+				}
+			}
 		}
 	};
 
@@ -271,31 +265,22 @@ namespace
 	void BuildButtonKeys()
 	{
 		auto& s = PFR::Settings::GetSingleton();
-		g_layKeys[0] = { RE::INPUT_DEVICE::kKeyboard,
+		// Pair A (Lay tap / Bury hold) uses the Lay key; Pair B (Resurrect tap /
+		// Take hold) uses the Resurrect key. The old separate bury/collect keys
+		// are unused now that each pair shares one key via tap-vs-hold.
+		g_pairAKeys[0] = { RE::INPUT_DEVICE::kKeyboard,
 			static_cast<SkyPromptAPI::ButtonID>(s.layKeyboard.load()) };
-		g_layKeys[1] = { RE::INPUT_DEVICE::kGamepad,
+		g_pairAKeys[1] = { RE::INPUT_DEVICE::kGamepad,
 			static_cast<SkyPromptAPI::ButtonID>(s.layGamepad.load()) };
-		g_buryKeys[0] = { RE::INPUT_DEVICE::kKeyboard,
-			static_cast<SkyPromptAPI::ButtonID>(s.buryKeyboard.load()) };
-		g_buryKeys[1] = { RE::INPUT_DEVICE::kGamepad,
-			static_cast<SkyPromptAPI::ButtonID>(s.buryGamepad.load()) };
-		g_collectKeys[0] = { RE::INPUT_DEVICE::kKeyboard,
-			static_cast<SkyPromptAPI::ButtonID>(s.collectKeyboard.load()) };
-		g_collectKeys[1] = { RE::INPUT_DEVICE::kGamepad,
-			static_cast<SkyPromptAPI::ButtonID>(s.collectGamepad.load()) };
-		g_resurrectKeys[0] = { RE::INPUT_DEVICE::kKeyboard,
+		g_pairBKeys[0] = { RE::INPUT_DEVICE::kKeyboard,
 			static_cast<SkyPromptAPI::ButtonID>(s.resurrectKeyboard.load()) };
-		g_resurrectKeys[1] = { RE::INPUT_DEVICE::kGamepad,
+		g_pairBKeys[1] = { RE::INPUT_DEVICE::kGamepad,
 			static_cast<SkyPromptAPI::ButtonID>(s.resurrectGamepad.load()) };
 
 		g_sink.m_templates[0].button_key =
-			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_layKeys, 2);
+			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_pairAKeys, 2);
 		g_sink.m_templates[1].button_key =
-			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_buryKeys, 2);
-		g_sink.m_templates[2].button_key =
-			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_collectKeys, 2);
-		g_sink.m_templates[3].button_key =
-			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_resurrectKeys, 2);
+			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_pairBKeys, 2);
 
 		// The Destroy Grave prompt fills on the execute key (held while the
 		// reveal modifier is down).
@@ -367,10 +352,10 @@ void PromptManager::Init()
 	}
 
 	(void)SkyPromptAPI::RequestTheme(g_clientID, "BuryTakeBodies");
-	logger::info("PromptManager: init clientID={} (Lay=kb{} / Bury=kb{}) shiftGated={}",
+	logger::info("PromptManager: init clientID={} (PairA/Lay-Bury=kb{} PairB/Res-Take=kb{}) shiftGated={}",
 		g_clientID,
 		PFR::Settings::GetSingleton().layKeyboard.load(),
-		PFR::Settings::GetSingleton().buryKeyboard.load(),
+		PFR::Settings::GetSingleton().resurrectKeyboard.load(),
 		PFR::Settings::GetSingleton().shiftGatesPrompts.load());
 }
 
@@ -406,12 +391,11 @@ void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 
 	auto& s = PFR::Settings::GetSingleton();
 
-	// Bury needs a shovel (unless disabled); Pick Up needs a humanoid corpse;
-	// Resurrect needs a dead actor (not an ash pile) and the toggle on.
-	const bool wantBury = !s.buryRequiresShovel.load() || RespectManager::PlayerHasShovel();
-	const bool wantCollect = s.collectEnabled.load() && PickupManager::CanCollect(a_ref);
-	const bool wantResurrect = s.resurrectEnabled.load() && RespectManager::CanResurrect(a_ref);
-	g_sink.BuildVisible(refID, wantBury, wantCollect, wantResurrect);
+	// Pair A (Lay tap / Bury hold) always shows — Lay works on any corpse, and
+	// the shovel gate for Bury is enforced at execute time. Pair B (Resurrect
+	// tap / Take hold) shows only on a resurrectable dead actor (not an ash pile).
+	const bool wantB = RespectManager::CanResurrect(a_ref);
+	g_sink.BuildVisible(refID, wantB);
 
 	if (!s.shiftGatesPrompts.load()) {
 		// Always-on behaviour: show the prompts whenever the crosshair is on a corpse.
