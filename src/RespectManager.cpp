@@ -329,6 +329,29 @@ namespace RespectManager
 		return false;
 	}
 
+	bool CanResurrect(RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref) return false;
+		auto* actor = a_ref->As<RE::Actor>();
+		return actor && actor->IsDead();  // ash piles / non-actors excluded
+	}
+
+	void ExecuteResurrect(RE::FormID a_refID)
+	{
+		auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_refID);
+		if (!ref) return;
+		auto* actor = ref->As<RE::Actor>();
+		if (!actor || !actor->IsDead()) return;
+
+		const bool reset = PFR::Settings::GetSingleton().resurrectResetInventory.load();
+		actor->Resurrect(reset, true);  // (resetInventory, attach3D)
+		PlayTurnUndeadSound();
+
+		if (PFR::Settings::GetSingleton().debug.load()) {
+			logger::debug("Resurrect: {:08X} reset={}", a_refID, reset);
+		}
+	}
+
 	void ExecuteLayToRest(RE::FormID a_refID)
 	{
 		auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_refID);

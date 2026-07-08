@@ -23,6 +23,15 @@ namespace PFR
 		std::atomic<int32_t> collectGamepad{ -1 };
 		std::atomic<bool>    collectEnabled{ true };
 
+		// Resurrect hold action — bring a dead actor back to life.  G = 0x22 (34).
+		std::atomic<int32_t> resurrectKeyboard{ 34 };
+		std::atomic<int32_t> resurrectGamepad{ -1 };
+		std::atomic<bool>    resurrectEnabled{ true };
+		// Reset the actor's inventory on resurrect: true = they come back fully
+		// re-equipped (like console "resurrect 1"); false = keep their current
+		// (possibly looted) inventory (like bare "resurrect").
+		std::atomic<bool>    resurrectResetInventory{ true };
+
 		// Destroy-grave: hold this MODIFIER while looking at one of our graves
 		// to reveal a "Destroy Grave" hold prompt on graveDestroyKey.  Hidden
 		// otherwise so the epitaph stays clean.  LShift = 0x2A (42), E = 0x12 (18).

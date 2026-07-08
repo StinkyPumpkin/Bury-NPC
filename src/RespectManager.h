@@ -20,6 +20,13 @@ namespace RespectManager
 	// Shovel02 0xF5D06 in Skyrim.esm).  Gates the Bury prompt.
 	bool PlayerHasShovel();
 
+	// True if the ref is a dead actor that can be brought back (excludes ash
+	// piles and non-actors).  Gates the Resurrect prompt.
+	bool CanResurrect(RE::TESObjectREFR* a_ref);
+
+	// Bring a dead actor back to life (RE::Actor::Resurrect).
+	void ExecuteResurrect(RE::FormID a_refID);
+
 	// True if the ref is a gravestone THIS mod placed (base == our grave
 	// activator).  Used to show the Destroy Grave prompt only on our graves.
 	bool IsOurGrave(RE::TESObjectREFR* a_ref);
