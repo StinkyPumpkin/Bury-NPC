@@ -38,6 +38,15 @@ namespace PFR
 		collectEnabled.store(
 			ini.GetBoolValue("Collect", "collectEnabled", collectEnabled.load()));
 
+		resurrectKeyboard.store(static_cast<int32_t>(
+			ini.GetLongValue("Hotkeys", "resurrectKeyboard", resurrectKeyboard.load())));
+		resurrectGamepad.store(static_cast<int32_t>(
+			ini.GetLongValue("Hotkeys", "resurrectGamepad", resurrectGamepad.load())));
+		resurrectEnabled.store(
+			ini.GetBoolValue("Resurrect", "resurrectEnabled", resurrectEnabled.load()));
+		resurrectResetInventory.store(
+			ini.GetBoolValue("Resurrect", "resurrectResetInventory", resurrectResetInventory.load()));
+
 		graveDestroyEnabled.store(
 			ini.GetBoolValue("Grave", "graveDestroyEnabled", graveDestroyEnabled.load()));
 		graveDestroyModifier.store(static_cast<int32_t>(

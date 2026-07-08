@@ -14,11 +14,13 @@ namespace
 	constexpr SkyPromptAPI::EventID EVENT_BURY = 47313;
 	constexpr SkyPromptAPI::EventID EVENT_COLLECT = 47314;
 	constexpr SkyPromptAPI::EventID EVENT_DESTROY = 47315;
+	constexpr SkyPromptAPI::EventID EVENT_RESURRECT = 47316;
 
 	constexpr SkyPromptAPI::ActionID ACTION_LAY = 0;
 	constexpr SkyPromptAPI::ActionID ACTION_BURY = 1;
 	constexpr SkyPromptAPI::ActionID ACTION_COLLECT = 2;
 	constexpr SkyPromptAPI::ActionID ACTION_DESTROY = 3;
+	constexpr SkyPromptAPI::ActionID ACTION_RESURRECT = 4;
 
 	SkyPromptAPI::ClientID    g_clientID = 0;
 	std::atomic<bool>         g_showing{ false };
@@ -36,15 +38,18 @@ namespace
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_layKeys[2];
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_buryKeys[2];
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_collectKeys[2];
+	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_resurrectKeys[2];
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_graveKeys[2];
 
 	struct RespectPromptSink : public SkyPromptAPI::PromptSink
 	{
-		// Fixed templates (identity + keys). 0 = Lay, 1 = Bury, 2 = Pick Up.
-		SkyPromptAPI::Prompt m_templates[3];
+		// Fixed templates (identity + keys). 0 = Lay, 1 = Bury, 2 = Pick Up,
+		// 3 = Resurrect.
+		SkyPromptAPI::Prompt m_templates[4];
 		// The active subset, packed contiguously (Bury drops out without a
-		// shovel, Pick Up without a humanoid corpse), rebuilt each show.
-		SkyPromptAPI::Prompt m_visible[3];
+		// shovel, Pick Up without a humanoid corpse, Resurrect when disabled),
+		// rebuilt each show.
+		SkyPromptAPI::Prompt m_visible[4];
 		std::atomic<std::uint8_t> m_promptCount{ 1 };
 
 		RespectPromptSink()
@@ -75,10 +80,20 @@ namespace
 			m_templates[2].refid = 0;
 			m_templates[2].text_color = 0xFFFFFFFF;
 			m_templates[2].progress = 0.0f;
+
+			// Resurrect — hold (dead actors only).
+			m_templates[3].text = "Resurrect";
+			m_templates[3].eventID = EVENT_RESURRECT;
+			m_templates[3].actionID = ACTION_RESURRECT;
+			m_templates[3].type = SkyPromptAPI::PromptType::kHold;
+			m_templates[3].refid = 0;
+			m_templates[3].text_color = 0xFFFFFFFF;
+			m_templates[3].progress = 0.0f;
 		}
 
 		// Pack the active prompts into m_visible in a stable order.
-		void BuildVisible(RE::FormID a_refID, bool a_wantBury, bool a_wantCollect)
+		void BuildVisible(RE::FormID a_refID, bool a_wantBury, bool a_wantCollect,
+			bool a_wantResurrect)
 		{
 			std::uint8_t n = 0;
 			m_visible[n] = m_templates[0];  // Lay always
@@ -91,6 +106,11 @@ namespace
 			}
 			if (a_wantCollect) {
 				m_visible[n] = m_templates[2];
+				m_visible[n].refid = a_refID;
+				++n;
+			}
+			if (a_wantResurrect) {
+				m_visible[n] = m_templates[3];
 				m_visible[n].refid = a_refID;
 				++n;
 			}
@@ -116,6 +136,8 @@ namespace
 					RespectManager::ExecuteBury(refID);
 				} else if (action == ACTION_COLLECT) {
 					PickupManager::ExecuteCollect(refID);
+				} else if (action == ACTION_RESURRECT) {
+					RespectManager::ExecuteResurrect(refID);
 				} else {
 					RespectManager::ExecuteLayToRest(refID);
 				}
@@ -261,6 +283,10 @@ namespace
 			static_cast<SkyPromptAPI::ButtonID>(s.collectKeyboard.load()) };
 		g_collectKeys[1] = { RE::INPUT_DEVICE::kGamepad,
 			static_cast<SkyPromptAPI::ButtonID>(s.collectGamepad.load()) };
+		g_resurrectKeys[0] = { RE::INPUT_DEVICE::kKeyboard,
+			static_cast<SkyPromptAPI::ButtonID>(s.resurrectKeyboard.load()) };
+		g_resurrectKeys[1] = { RE::INPUT_DEVICE::kGamepad,
+			static_cast<SkyPromptAPI::ButtonID>(s.resurrectGamepad.load()) };
 
 		g_sink.m_templates[0].button_key =
 			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_layKeys, 2);
@@ -268,6 +294,8 @@ namespace
 			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_buryKeys, 2);
 		g_sink.m_templates[2].button_key =
 			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_collectKeys, 2);
+		g_sink.m_templates[3].button_key =
+			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_resurrectKeys, 2);
 
 		// The Destroy Grave prompt fills on the execute key (held while the
 		// reveal modifier is down).
@@ -378,10 +406,12 @@ void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 
 	auto& s = PFR::Settings::GetSingleton();
 
-	// Bury needs a shovel (unless disabled); Pick Up needs a humanoid corpse.
+	// Bury needs a shovel (unless disabled); Pick Up needs a humanoid corpse;
+	// Resurrect needs a dead actor (not an ash pile) and the toggle on.
 	const bool wantBury = !s.buryRequiresShovel.load() || RespectManager::PlayerHasShovel();
 	const bool wantCollect = s.collectEnabled.load() && PickupManager::CanCollect(a_ref);
-	g_sink.BuildVisible(refID, wantBury, wantCollect);
+	const bool wantResurrect = s.resurrectEnabled.load() && RespectManager::CanResurrect(a_ref);
+	g_sink.BuildVisible(refID, wantBury, wantCollect, wantResurrect);
 
 	if (!s.shiftGatesPrompts.load()) {
 		// Always-on behaviour: show the prompts whenever the crosshair is on a corpse.
