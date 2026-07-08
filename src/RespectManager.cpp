@@ -4,6 +4,8 @@
 #include "PromptManager.h"
 
 #include <mutex>
+#include <thread>
+#include <chrono>
 
 namespace
 {
@@ -15,6 +17,9 @@ namespace
 	// Vanilla shovels (Skyrim.esm) — gate the Bury prompt/action.
 	RE::TESBoundObject*         g_shovel1 = nullptr;  // Shovel01 0xF5D05
 	RE::TESBoundObject*         g_shovel2 = nullptr;  // Shovel02 0xF5D06
+
+	// Our menu-less isSmelter "dig" furniture (BuryTakeBodies.esp 0x835).
+	RE::TESFurniture*           g_animFurniture = nullptr;
 
 	// ------------------------------------------------------------------
 	// Bury-in-progress state.  Bury pops a UIExtensions text-entry box; the
@@ -118,6 +123,51 @@ namespace
 	}
 
 	// ------------------------------------------------------------------
+	// Play the smelter-shovel "dig" animation, then place the grave.  The player
+	// uses a menu-less isSmelter furniture (PFR_BuryAnimMarker) spawned at their
+	// feet; after a delay the grave appears, the body is removed, the player
+	// stands, and the marker is cleaned up.  Falls back to an instant bury when
+	// the animation is off or the furniture is missing.
+	// ------------------------------------------------------------------
+	void DoBuryWithAnimation(RE::FormID a_bodyID, std::string a_engraving)
+	{
+		auto& settings = PFR::Settings::GetSingleton();
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!settings.buryAnimation.load() || !g_animFurniture || !player) {
+			PlaceGraveAndBury(a_bodyID, a_engraving);
+			return;
+		}
+
+		RE::NiPointer<RE::TESObjectREFR> furn = player->PlaceObjectAtMe(g_animFurniture, false);
+		if (!furn) {
+			PlaceGraveAndBury(a_bodyID, a_engraving);
+			return;
+		}
+		const RE::FormID furnID = furn->GetFormID();
+		furn->ActivateRef(player, 0, nullptr, 1, false);  // player starts shovelling
+
+		int ms = static_cast<int>(settings.buryAnimationDelay.load() * 1000.0f);
+		if (ms < 0) ms = 0;
+
+		// Wait out the animation off the main thread, then finish on it.
+		std::thread([a_bodyID, a_engraving, furnID, ms]() {
+			std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+			auto* task = SKSE::GetTaskInterface();
+			if (!task) return;
+			task->AddTask([a_bodyID, a_engraving, furnID]() {
+				PlaceGraveAndBury(a_bodyID, a_engraving);
+				if (auto* furnRef = RE::TESForm::LookupByID<RE::TESObjectREFR>(furnID)) {
+					if (auto* p = RE::PlayerCharacter::GetSingleton()) {
+						furnRef->ActivateRef(p, 0, nullptr, 1, false);  // stand up / exit
+					}
+					furnRef->Disable();
+					furnRef->SetDelete(true);
+				}
+			});
+		}).detach();
+	}
+
+	// ------------------------------------------------------------------
 	// Finalize a bury once the text box has closed: build the inscription from
 	// the typed message and place the grave (or, on cancel, just un-block the
 	// body).  Clears the bury state.
@@ -151,7 +201,7 @@ namespace
 
 		std::string engraving = BuildEngraving(deadName, message);
 		if (auto* task = SKSE::GetTaskInterface()) {
-			task->AddTask([bodyID, engraving]() { PlaceGraveAndBury(bodyID, engraving); });
+			task->AddTask([bodyID, engraving]() { DoBuryWithAnimation(bodyID, engraving); });
 		}
 	}
 
@@ -246,6 +296,8 @@ namespace RespectManager
 			// Vanilla shovels — MiscObjects in Skyrim.esm (named "Shovel").
 			g_shovel1 = dh->LookupForm<RE::TESObjectMISC>(0x00F5D05, "Skyrim.esm");
 			g_shovel2 = dh->LookupForm<RE::TESObjectMISC>(0x00F5D06, "Skyrim.esm");
+			// Our dig-animation furniture.
+			g_animFurniture = dh->LookupForm<RE::TESFurniture>(0x000835, "BuryTakeBodies.esp");
 		}
 
 		BuryDialogSink::GetSingleton().Register();
@@ -327,7 +379,7 @@ namespace RespectManager
 			std::string engraving = BuildEngraving(deadName, "");
 			ref->SetActivationBlocked(false);
 			if (auto* task = SKSE::GetTaskInterface()) {
-				task->AddTask([id = a_refID, engraving]() { PlaceGraveAndBury(id, engraving); });
+				task->AddTask([id = a_refID, engraving]() { DoBuryWithAnimation(id, engraving); });
 			}
 			return;
 		}

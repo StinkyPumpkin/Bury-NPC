@@ -40,6 +40,11 @@ namespace PFR
 		// Lay to Rest and Pick Up Body are unaffected.
 		std::atomic<bool> buryRequiresShovel{ true };
 
+		// Play the smelter-shovel "dig" animation on Bury (vanilla isSmelter
+		// furniture PFR_BuryAnimMarker) before the grave appears.
+		std::atomic<bool>  buryAnimation{ true };
+		std::atomic<float> buryAnimationDelay{ 4.0f };  // seconds the dig plays
+
 		// Gate the corpse action prompts behind the reveal modifier (Shift):
 		// with this ON, a corpse shows QuickLoot by default and our
 		// Lay/Bury/PickUp prompts appear only WHILE the modifier is held (which

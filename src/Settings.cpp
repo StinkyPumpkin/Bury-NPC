@@ -50,6 +50,10 @@ namespace PFR
 
 		buryRequiresShovel.store(
 			ini.GetBoolValue("Bury", "requiresShovel", buryRequiresShovel.load()));
+		buryAnimation.store(
+			ini.GetBoolValue("Bury", "buryAnimation", buryAnimation.load()));
+		buryAnimationDelay.store(static_cast<float>(
+			ini.GetDoubleValue("Bury", "buryAnimationDelay", buryAnimationDelay.load())));
 		shiftGatesPrompts.store(
 			ini.GetBoolValue("General", "shiftGatesPrompts", shiftGatesPrompts.load()));
 
