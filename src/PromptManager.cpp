@@ -3,7 +3,6 @@
 #include "Settings.h"
 #include "RespectManager.h"
 #include "PickupManager.h"
-#include "QuickLootAPI.h"
 
 namespace
 {
@@ -30,46 +29,14 @@ namespace
 	std::atomic<RE::FormID>   g_currentGraveID{ 0 };
 	std::atomic<bool>         g_graveShowing{ false };
 
-	// Reveal modifier (Shift) currently held, and whether we currently owe
-	// QuickLoot an EnableLootMenu() to undo a DisableLootMenu().
+	// Reveal modifier (Shift) currently held.
 	std::atomic<bool>         g_modifierHeld{ false };
-	std::atomic<bool>         g_lootDisabled{ false };
-	bool                      g_hasQuickLoot = false;
 
 	// One key-pair (keyboard, gamepad) per action.
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_layKeys[2];
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_buryKeys[2];
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_collectKeys[2];
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_graveKeys[2];
-
-	// ------------------------------------------------------------------
-	// QuickLoot IE integration — hide its loot menu while our prompts show.
-	// (The public API is the static class QuickLoot::API::QuickLootAPI.)
-	// ------------------------------------------------------------------
-	using QLApi = QuickLoot::API::QuickLootAPI;
-
-	void DisableQuickLoot()
-	{
-		if (g_hasQuickLoot && !g_lootDisabled.exchange(true)) {
-			QLApi::DisableLootMenu();
-		}
-	}
-
-	void EnableQuickLoot()
-	{
-		if (g_hasQuickLoot && g_lootDisabled.exchange(false)) {
-			QLApi::EnableLootMenu();
-		}
-	}
-
-	// Backstop: refuse to open the loot menu while we've suppressed it (covers a
-	// re-open race between DisableLootMenu and the crosshair re-evaluating).
-	void OnOpeningLootMenu(QuickLoot::API::Events::OpeningLootMenuEvent* a_event)
-	{
-		if (a_event && g_lootDisabled.load()) {
-			a_event->result = QuickLoot::API::Events::HandleResult::kStop;
-		}
-	}
 
 	struct RespectPromptSink : public SkyPromptAPI::PromptSink
 	{
@@ -158,15 +125,14 @@ namespace
 
 	RespectPromptSink g_sink;
 
-	// Send / hide the body prompt set, keeping QuickLoot in sync.
-	void SendBodyPrompt(bool a_disableLoot)
+	// Send / hide the body prompt set.
+	void SendBodyPrompt()
 	{
 		if (g_clientID == 0) return;
 		if (!g_showing.load()) {
 			(void)SkyPromptAPI::SendPrompt(&g_sink, g_clientID);
 			g_showing.store(true);
 		}
-		if (a_disableLoot) DisableQuickLoot();
 	}
 
 	void HideBodyPrompt()
@@ -175,7 +141,6 @@ namespace
 			SkyPromptAPI::RemovePrompt(&g_sink, g_clientID);
 			g_showing.store(false);
 		}
-		EnableQuickLoot();
 	}
 
 	// ------------------------------------------------------------------
@@ -240,8 +205,8 @@ namespace
 
 	// Tracks the reveal modifier.  While it is held it reveals whichever prompt
 	// set matches the current crosshair target: the Lay/Bury/PickUp buttons on a
-	// corpse (and hides QuickLoot), or the Destroy Grave prompt on one of our
-	// graves.  Releasing hides them again.
+	// corpse, or the Destroy Grave prompt on one of our graves.  Releasing hides
+	// them again.
 	class ModifierInputSink : public RE::BSTEventSink<RE::InputEvent*>
 	{
 	public:
@@ -267,7 +232,7 @@ namespace
 				if (btn->IsDown()) {
 					g_modifierHeld.store(true);
 					if (g_currentRefID.load() != 0 && s.shiftGatesPrompts.load()) {
-						SendBodyPrompt(true);
+						SendBodyPrompt();
 					} else if (g_currentGraveID.load() != 0) {
 						SendGravePrompt();
 					}
@@ -366,19 +331,6 @@ void PromptManager::Init()
 
 	BuildButtonKeys();
 
-	// Connect to QuickLoot IE (optional) so we can hide its loot menu while the
-	// Shift-revealed action prompts are up.
-	// Require only v20 — that's the interface DisableLootMenu/EnableLootMenu use.
-	// (Defaulting to kLatest/v21 makes Init() return false on a v20-only server
-	// like QuickLoot IE 3.4, even though the loot-menu toggle is available.)
-	g_hasQuickLoot = QLApi::Init("BuryTakeBodies", QuickLoot::API::ApiVersion::kV20);
-	if (g_hasQuickLoot) {
-		QLApi::RegisterOpeningLootMenuHandler(OnOpeningLootMenu);
-	}
-	logger::info("PromptManager: QuickLoot API {} (shiftGates={})",
-		g_hasQuickLoot ? "connected" : "not found",
-		PFR::Settings::GetSingleton().shiftGatesPrompts.load());
-
 	if (auto* crosshairSrc = SKSE::GetCrosshairRefEventSource()) {
 		crosshairSrc->AddEventSink(&CrosshairSink::GetSingleton());
 	}
@@ -399,7 +351,6 @@ void PromptManager::Shutdown()
 	HideBodyPrompt();
 	g_currentRefID.store(0);
 	RemoveGravePrompt();
-	EnableQuickLoot();
 	if (auto* crosshairSrc = SKSE::GetCrosshairRefEventSource()) {
 		crosshairSrc->RemoveEventSink(&CrosshairSink::GetSingleton());
 	}
@@ -433,14 +384,15 @@ void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 	g_sink.BuildVisible(refID, wantBury, wantCollect);
 
 	if (!s.shiftGatesPrompts.load()) {
-		// Legacy behaviour: always show the prompts, leave QuickLoot alone.
-		SendBodyPrompt(false);
+		// Always-on behaviour: show the prompts whenever the crosshair is on a corpse.
+		SendBodyPrompt();
 	} else if (g_modifierHeld.load()) {
 		// Modifier already held as we look at the corpse — reveal immediately.
-		SendBodyPrompt(true);
+		SendBodyPrompt();
 	}
 	// Otherwise the prompts stay hidden until the reveal modifier is pressed
-	// (ModifierInputSink), so QuickLoot shows by default.
+	// (ModifierInputSink) — so a corpse shows only its default (e.g. QuickLoot)
+	// until you hold Shift.
 }
 
 void PromptManager::ShowGraveForRef(RE::TESObjectREFR* a_ref)
