@@ -368,11 +368,16 @@ void PromptManager::Init()
 
 	// Connect to QuickLoot IE (optional) so we can hide its loot menu while the
 	// Shift-revealed action prompts are up.
-	g_hasQuickLoot = QLApi::Init("BuryTakeBodies");
+	// Require only v20 — that's the interface DisableLootMenu/EnableLootMenu use.
+	// (Defaulting to kLatest/v21 makes Init() return false on a v20-only server
+	// like QuickLoot IE 3.4, even though the loot-menu toggle is available.)
+	g_hasQuickLoot = QLApi::Init("BuryTakeBodies", QuickLoot::API::ApiVersion::kV20);
 	if (g_hasQuickLoot) {
 		QLApi::RegisterOpeningLootMenuHandler(OnOpeningLootMenu);
 	}
-	logger::info("PromptManager: QuickLoot API {}", g_hasQuickLoot ? "connected" : "not found");
+	logger::info("PromptManager: QuickLoot API {} (shiftGates={})",
+		g_hasQuickLoot ? "connected" : "not found",
+		PFR::Settings::GetSingleton().shiftGatesPrompts.load());
 
 	if (auto* crosshairSrc = SKSE::GetCrosshairRefEventSource()) {
 		crosshairSrc->AddEventSink(&CrosshairSink::GetSingleton());
