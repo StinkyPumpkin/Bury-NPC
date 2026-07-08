@@ -374,6 +374,13 @@ namespace RespectManager
 	{
 		auto& settings = PFR::Settings::GetSingleton();
 
+		// Bury is the HOLD half of the Lay/Bury key, so the shovel gate is enforced
+		// here (the prompt itself always shows for the Lay tap).
+		if (settings.buryRequiresShovel.load() && !PlayerHasShovel()) {
+			RE::DebugNotification("You need a shovel to bury the dead.");
+			return;
+		}
+
 		auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_refID);
 		if (!IsValidCorpse(ref)) return;
 
