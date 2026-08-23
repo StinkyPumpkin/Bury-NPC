@@ -6,6 +6,7 @@
 #include <mutex>
 #include <thread>
 #include <chrono>
+#include <cctype>
 
 namespace
 {
@@ -115,7 +116,16 @@ namespace
 	std::string BuildEngraving(const std::string& a_deadName, const std::string& a_message)
 	{
 		std::string engraving = a_deadName.empty() ? std::string("Here lies the fallen") : a_deadName;
-		if (!a_message.empty()) {
+		// v1.4.3: the NAME is engraved automatically — if the player typed the name again
+		// (field report: grave read "Ivana — Ivana"), treat it as no message.
+		auto iequals = [](const std::string& a, const std::string& b) {
+			if (a.size() != b.size()) return false;
+			for (size_t i = 0; i < a.size(); ++i)
+				if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i])))
+					return false;
+			return true;
+		};
+		if (!a_message.empty() && !iequals(a_message, a_deadName)) {
 			engraving += " — ";
 			engraving += a_message;
 		}
@@ -211,6 +221,9 @@ namespace
 	// ------------------------------------------------------------------
 	void OpenBuryTextEntry()
 	{
+		// v1.4.3 (user request): tell the player what the box is for — the NAME goes on
+		// automatically, the box is only the epitaph.
+		RE::DebugNotification("Write your epitaph — the name is engraved automatically.");
 		SKSE::GetTaskInterface()->AddUITask([]() {
 			auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
 			if (!vm) return;
@@ -406,6 +419,9 @@ namespace RespectManager
 
 		// Without UIExtensions we can't show a text box — bury with name only.
 		if (!g_hasUIExtensions) {
+			// v1.4.3 (Nexus report): this fallback was SILENT — the player had no idea why
+			// no box appeared. Say it once, right when it matters.
+			RE::DebugNotification("Bury Take Bodies: install UIExtensions to write custom epitaphs.");
 			std::string engraving = BuildEngraving(deadName, "");
 			ref->SetActivationBlocked(false);
 			if (auto* task = SKSE::GetTaskInterface()) {
