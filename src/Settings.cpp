@@ -65,6 +65,8 @@ namespace PFR
 			ini.GetDoubleValue("Bury", "buryAnimationDelay", buryAnimationDelay.load())));
 		shiftGatesPrompts.store(
 			ini.GetBoolValue("General", "shiftGatesPrompts", shiftGatesPrompts.load()));
+		hideQuickLootWhileRevealing.store(
+			ini.GetBoolValue("General", "hideQuickLootWhileRevealing", hideQuickLootWhileRevealing.load()));
 
 		logger::info(
 			"Settings: layKB={} buryKB={} collectKB={} collectEnabled={} "

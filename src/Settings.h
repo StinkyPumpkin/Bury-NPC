@@ -61,6 +61,12 @@ namespace PFR
 		// graveDestroyModifier as the key.
 		std::atomic<bool> shiftGatesPrompts{ true };
 
+		// While the reveal modifier is held on a corpse, ask QuickLoot IE to hide its
+		// loot menu (3.x request API: DisableLootMenu/EnableLootMenu) so the E tap
+		// (Resurrect) and hold (Take) cannot also drive the loot list. Released =
+		// QuickLoot comes straight back. No effect if QuickLoot IE is not installed.
+		std::atomic<bool> hideQuickLootWhileRevealing{ true };
+
 	private:
 		Settings() = default;
 	};
