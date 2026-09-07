@@ -3,6 +3,7 @@
 #include "Settings.h"
 #include "RespectManager.h"
 #include "PickupManager.h"
+#include "QuickLootAPI.h"   // QuickLoot IE 3.x request API (SKSE messaging), header-only
 
 namespace
 {
@@ -36,6 +37,23 @@ namespace
 
 	// Reveal modifier (Shift) currently held.
 	std::atomic<bool>         g_modifierHeld{ false };
+
+	// --Claude 2026-09-07: QuickLoot IE suppression while the reveal modifier is held on
+	// a corpse. DisableLootMenu hides the loot list at once; EnableLootMenu makes
+	// QuickLoot re-evaluate the crosshair and re-open on the same corpse.
+	std::atomic<bool>         g_quickLootReady{ false };
+	std::atomic<bool>         g_lootSuppressed{ false };
+
+	void SuppressQuickLoot(bool a_on)
+	{
+		if (!g_quickLootReady.load()) return;
+		if (!PFR::Settings::GetSingleton().hideQuickLootWhileRevealing.load()) return;
+		if (a_on) {
+			if (!g_lootSuppressed.exchange(true)) QuickLoot::QuickLootAPI::DisableLootMenu();
+		} else {
+			if (g_lootSuppressed.exchange(false)) QuickLoot::QuickLootAPI::EnableLootMenu();
+		}
+	}
 
 	// One key-pair (keyboard, gamepad) per PROMPT. Pair A = Lay/Bury key,
 	// Pair B = Resurrect/Take key.
@@ -248,6 +266,7 @@ namespace
 				if (btn->IsDown()) {
 					g_modifierHeld.store(true);
 					if (g_currentRefID.load() != 0 && s.shiftGatesPrompts.load()) {
+						SuppressQuickLoot(true);   // loot list away first, then our buttons
 						SendBodyPrompt();
 					} else if (g_currentGraveID.load() != 0) {
 						SendGravePrompt();
@@ -256,6 +275,7 @@ namespace
 					g_modifierHeld.store(false);
 					if (s.shiftGatesPrompts.load()) HideBodyPrompt();
 					RemoveGravePrompt();
+					SuppressQuickLoot(false);
 				}
 			}
 			return RE::BSEventNotifyControl::kContinue;
@@ -352,6 +372,14 @@ void PromptManager::Init()
 	}
 
 	(void)SkyPromptAPI::RequestTheme(g_clientID, "BuryTakeBodies");
+
+	// QuickLoot IE 3.x request API: connect now (kDataLoaded = every plugin is loaded).
+	// Soft dependency — without QuickLoot IE the client just reports not-ready.
+	QuickLoot::QuickLootAPI::Init();
+	g_quickLootReady.store(QuickLoot::QuickLootAPI::IsReady());
+	logger::info("PromptManager: QuickLoot IE API {} (hideQuickLootWhileRevealing={})",
+		g_quickLootReady.load() ? "connected" : "not available",
+		PFR::Settings::GetSingleton().hideQuickLootWhileRevealing.load());
 	logger::info("PromptManager: init clientID={} (PairA/Lay-Bury=kb{} PairB/Res-Take=kb{}) shiftGated={}",
 		g_clientID,
 		PFR::Settings::GetSingleton().layKeyboard.load(),
@@ -361,6 +389,7 @@ void PromptManager::Init()
 
 void PromptManager::Shutdown()
 {
+	SuppressQuickLoot(false);
 	HideBodyPrompt();
 	g_currentRefID.store(0);
 	RemoveGravePrompt();
@@ -402,6 +431,7 @@ void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 		SendBodyPrompt();
 	} else if (g_modifierHeld.load()) {
 		// Modifier already held as we look at the corpse — reveal immediately.
+		SuppressQuickLoot(true);
 		SendBodyPrompt();
 	}
 	// Otherwise the prompts stay hidden until the reveal modifier is pressed
@@ -426,6 +456,7 @@ void PromptManager::ShowGraveForRef(RE::TESObjectREFR* a_ref)
 
 void PromptManager::Hide()
 {
+	SuppressQuickLoot(false);   // crosshair left the corpse — give QuickLoot back
 	HideBodyPrompt();
 	g_currentRefID.store(0);
 	g_currentGraveID.store(0);
