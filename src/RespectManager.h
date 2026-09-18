@@ -23,6 +23,9 @@ namespace RespectManager
 	// True if the ref is a dead actor that can be brought back (excludes ash
 	// piles and non-actors).  Gates the Resurrect prompt.
 	bool CanResurrect(RE::TESObjectREFR* a_ref);
+	// A non-actor ref whose base name contains "ash" (turned-undead remains).
+	// Never true for an actor, alive or dead.
+	bool IsAshPile(RE::TESObjectREFR* a_ref);
 
 	// Bring a dead actor back to life (RE::Actor::Resurrect).
 	void ExecuteResurrect(RE::FormID a_refID);
