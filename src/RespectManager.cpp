@@ -66,20 +66,27 @@ namespace
 		}
 	}
 
+	// Ash piles (turned-undead remains): a NON-actor ref whose base name
+	// contains "ash". --Claude 2026-09-18: the actor exclusion is the fix for
+	// living NPCs with "ash" in their name (Rashaal Taussa) getting the corpse
+	// prompts and being removed by Lay to Rest.
+	bool IsAshPile(RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref || a_ref->As<RE::Actor>()) return false;
+		auto* base = a_ref->GetBaseObject();
+		if (!base) return false;
+		std::string name = base->GetName();
+		std::transform(name.begin(), name.end(), name.begin(),
+			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		return !name.empty() && name.find("ash") != std::string::npos;
+	}
+
 	bool IsValidCorpse(RE::TESObjectREFR* a_ref)
 	{
 		if (!a_ref) return false;
 		auto* actor = a_ref->As<RE::Actor>();
-		if (actor && actor->IsDead()) return true;
-
-		// Ash piles (turned-undead remains) — name contains "ash".
-		if (auto* base = a_ref->GetBaseObject()) {
-			std::string name = base->GetName();
-			std::transform(name.begin(), name.end(), name.begin(),
-				[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-			if (name.find("ash") != std::string::npos) return true;
-		}
-		return false;
+		if (actor) return actor->IsDead();   // a living actor is never a corpse
+		return IsAshPile(a_ref);
 	}
 
 	// ------------------------------------------------------------------
@@ -347,6 +354,13 @@ namespace RespectManager
 		if (!a_ref) return false;
 		auto* actor = a_ref->As<RE::Actor>();
 		return actor && actor->IsDead();  // ash piles / non-actors excluded
+	}
+
+	// Public wrapper for the crosshair sink; the test itself lives in the
+	// anonymous namespace beside IsValidCorpse.
+	bool IsAshPile(RE::TESObjectREFR* a_ref)
+	{
+		return ::IsAshPile(a_ref);
 	}
 
 	void ExecuteResurrect(RE::FormID a_refID)

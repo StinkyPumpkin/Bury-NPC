@@ -337,14 +337,14 @@ namespace
 					PromptManager::ShowGraveForRef(ref.get());
 					return RE::BSEventNotifyControl::kContinue;
 				}
-				if (auto* base = ref->GetBaseObject()) {
-					std::string name = base->GetName();
-					std::transform(name.begin(), name.end(), name.begin(),
-						[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-					if (!name.empty() && name.find("ash") != std::string::npos) {
-						PromptManager::ShowForRef(ref.get());
-						return RE::BSEventNotifyControl::kContinue;
-					}
+				// --Claude 2026-09-18: ash piles only. This used to test the
+				// base name of ANY ref, so a living NPC whose name contains
+				// "ash" (Luxury Suite's Rashaal Taussa) got the corpse prompts
+				// and Lay to Rest removed her. Actors never reach this branch
+				// now; the name test only runs on non-actor refs.
+				if (!actor && RespectManager::IsAshPile(ref.get())) {
+					PromptManager::ShowForRef(ref.get());
+					return RE::BSEventNotifyControl::kContinue;
 				}
 			}
 
