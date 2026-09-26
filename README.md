@@ -64,6 +64,9 @@ the slot. Cap: 50 simultaneously-carried bodies.
 
 ## Config — `SKSE/Plugins/BuryTakeBodies.ini`
 
+The INI is not shipped: the plugin writes it with the commented defaults the first
+time it runs (under MO2 it lands in `overwrite`), so an update never resets your values.
+
 - `[General]` `shiftGatesPrompts` (default true — prompts only while the reveal
   modifier is held; false = always shown on a corpse), `hideQuickLootWhileRevealing`
   (default true — hide QuickLoot IE's loot list while the modifier is held).
