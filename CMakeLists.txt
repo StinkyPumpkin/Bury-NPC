@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(BuryTakeBodies VERSION 1.5.0 LANGUAGES CXX)
+project(BuryTakeBodies VERSION 1.5.1 LANGUAGES CXX)
 
 # Deploy target — mod FOLDER gets --Claude; DLL name stays plain.
 set(OUTPUT_FOLDER "X:/MODDINGSSE/modorganizer2/mods/BuryTakeBodies--Claude")
