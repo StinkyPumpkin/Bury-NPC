@@ -63,13 +63,13 @@ collectKeyboard = 20
 collectGamepad = -1
 
 [Collect]
-; NOTE: currently ignored - Take Body is the HOLD of the resurrect key, so it
-; shares that key's prompt (can't be hidden on its own under the 2-key layout).
+; false = holding the resurrect key no longer takes the body. With Resurrect
+; also off, that key's prompt is hidden entirely.
 collectEnabled = true
 
 [Resurrect]
-; NOTE: currently ignored - Resurrect + Take share the resurrect key's prompt,
-; which shows on any dead actor. (Left here for a future per-action toggle.)
+; false = tapping the resurrect key no longer resurrects; the prompt then reads
+; "Take Body (hold)" only.
 resurrectEnabled = true
 ; true  = the actor comes back fully re-equipped (like console "resurrect 1").
 ; false = they keep their current (possibly looted) inventory.

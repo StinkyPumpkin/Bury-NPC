@@ -97,16 +97,20 @@ namespace
 		}
 
 		// Pair A always shows (Lay works on any corpse); Pair B shows only when
-		// the target can be resurrected (a dead actor, not an ash pile).
-		void BuildVisible(RE::FormID a_refID, bool a_wantB)
+		// the target can be resurrected (a dead actor, not an ash pile) and at
+		// least one of its halves is enabled. --Claude 2026-10-04: the label drops
+		// a half switched off by [Resurrect] resurrectEnabled / [Collect] collectEnabled.
+		void BuildVisible(RE::FormID a_refID, bool a_wantB, bool a_resurrect, bool a_collect)
 		{
 			std::uint8_t n = 0;
 			m_visible[n] = m_templates[0];  // Pair A (Lay/Bury) always
 			m_visible[n].refid = a_refID;
 			++n;
-			if (a_wantB) {
+			if (a_wantB && (a_resurrect || a_collect)) {
 				m_visible[n] = m_templates[1];  // Pair B (Resurrect/Take)
 				m_visible[n].refid = a_refID;
+				if (!a_resurrect) m_visible[n].text = "Take Body (hold)";
+				else if (!a_collect) m_visible[n].text = "Resurrect";
 				++n;
 			}
 			m_promptCount.store(n);
@@ -143,14 +147,19 @@ namespace
 					}
 				}
 			} else if (action == ACTION_PAIR_B) {
+				auto& s = PFR::Settings::GetSingleton();
 				if (etype == ET::kDown) {
 					g_holdFiredB.store(false);
 				} else if (etype == ET::kAccepted) {          // hold → Take Body
 					g_holdFiredB.store(true);
-					task->AddTask([refID]() { PickupManager::ExecuteCollect(refID); });
+					if (s.collectEnabled.load()) {
+						task->AddTask([refID]() { PickupManager::ExecuteCollect(refID); });
+					}
 				} else if (etype == ET::kUp) {                // release
 					if (!g_holdFiredB.exchange(false)) {      // no hold fired → tap → Resurrect
-						task->AddTask([refID]() { RespectManager::ExecuteResurrect(refID); });
+						if (s.resurrectEnabled.load()) {
+							task->AddTask([refID]() { RespectManager::ExecuteResurrect(refID); });
+						}
 					}
 				}
 			}
@@ -424,7 +433,7 @@ void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 	// the shovel gate for Bury is enforced at execute time. Pair B (Resurrect
 	// tap / Take hold) shows only on a resurrectable dead actor (not an ash pile).
 	const bool wantB = RespectManager::CanResurrect(a_ref);
-	g_sink.BuildVisible(refID, wantB);
+	g_sink.BuildVisible(refID, wantB, s.resurrectEnabled.load(), s.collectEnabled.load());
 
 	if (!s.shiftGatesPrompts.load()) {
 		// Always-on behaviour: show the prompts whenever the crosshair is on a corpse.
