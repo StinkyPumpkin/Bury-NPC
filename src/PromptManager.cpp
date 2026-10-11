@@ -66,6 +66,46 @@ namespace
 	std::atomic<bool> g_holdFiredA{ false };
 	std::atomic<bool> g_holdFiredB{ false };
 
+	// --Claude 2026-10-12: g_modifierHeld can go stale when the reveal key's release never
+	// reaches our input sink (alt-tab, a menu, a scene), which left the prompts live so a
+	// plain E resurrected. A pair is ARMED on its kDown only while the reveal key is
+	// physically down; kAccepted / kUp act only on an armed press.
+	std::atomic<bool> g_armedA{ false };
+	std::atomic<bool> g_armedB{ false };
+
+	void HideBodyPrompt();
+
+	// The DirectInput state array read directly (calling BSWin32KeyboardDevice::IsPressed
+	// links CommonLib's device object, whose virtuals it never defines - see TETHER Gate.cpp).
+	bool ModifierPhysicallyDown()
+	{
+		const auto key = static_cast<std::uint32_t>(PFR::Settings::GetSingleton().graveDestroyModifier.load());
+		if (key == 0 || key >= 256) return false;
+		auto* mgr = RE::BSInputDeviceManager::GetSingleton();
+		auto* kb  = mgr ? mgr->GetKeyboard() : nullptr;
+		if (!kb) return false;
+		const auto& keys = kb->curState;   // this CommonLib keeps curState as a plain member
+		return key < sizeof(keys) && (keys[key] & 0x80) != 0;
+	}
+
+	// A press is allowed when Shift-gating is off, or the reveal key is really down now.
+	bool RevealSatisfied()
+	{
+		return !PFR::Settings::GetSingleton().shiftGatesPrompts.load() || ModifierPhysicallyDown();
+	}
+
+	// The prompts were live without the reveal key: drop the stale state on the main thread.
+	void ClearStaleReveal()
+	{
+		if (auto* task = SKSE::GetTaskInterface()) {
+			task->AddTask([]() {
+				g_modifierHeld.store(false);
+				HideBodyPrompt();
+				SuppressQuickLoot(false);
+			});
+		}
+	}
+
 	struct RespectPromptSink : public SkyPromptAPI::PromptSink
 	{
 		// Two paired kHold templates. A = Lay(tap)/Bury(hold) on the Lay key,
@@ -138,10 +178,14 @@ namespace
 			if (action == ACTION_PAIR_A) {
 				if (etype == ET::kDown) {
 					g_holdFiredA.store(false);
+					g_armedA.store(RevealSatisfied());
+					if (!g_armedA.load()) ClearStaleReveal();
 				} else if (etype == ET::kAccepted) {          // hold → Bury
+					if (!g_armedA.load()) return;
 					g_holdFiredA.store(true);
 					task->AddTask([refID]() { RespectManager::ExecuteBury(refID); });
 				} else if (etype == ET::kUp) {                // release
+					if (!g_armedA.exchange(false)) return;
 					if (!g_holdFiredA.exchange(false)) {      // no hold fired → tap → Lay
 						task->AddTask([refID]() { RespectManager::ExecuteLayToRest(refID); });
 					}
@@ -150,12 +194,16 @@ namespace
 				auto& s = PFR::Settings::GetSingleton();
 				if (etype == ET::kDown) {
 					g_holdFiredB.store(false);
+					g_armedB.store(RevealSatisfied());
+					if (!g_armedB.load()) ClearStaleReveal();
 				} else if (etype == ET::kAccepted) {          // hold → Take Body
+					if (!g_armedB.load()) return;
 					g_holdFiredB.store(true);
 					if (s.collectEnabled.load()) {
 						task->AddTask([refID]() { PickupManager::ExecuteCollect(refID); });
 					}
 				} else if (etype == ET::kUp) {                // release
+					if (!g_armedB.exchange(false)) return;
 					if (!g_holdFiredB.exchange(false)) {      // no hold fired → tap → Resurrect
 						if (s.resurrectEnabled.load()) {
 							task->AddTask([refID]() { RespectManager::ExecuteResurrect(refID); });
@@ -215,6 +263,7 @@ namespace
 			if (a_event.type != SkyPromptAPI::PromptEventType::kAccepted) return;
 			RE::FormID graveID = g_currentGraveID.load();
 			if (graveID == 0) return;
+			if (!ModifierPhysicallyDown()) return;   // --Claude 2026-10-12: stale reveal, see g_armedA
 			SKSE::GetTaskInterface()->AddTask([graveID]() {
 				RespectManager::DestroyGrave(graveID);
 			});
@@ -438,10 +487,13 @@ void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 	if (!s.shiftGatesPrompts.load()) {
 		// Always-on behaviour: show the prompts whenever the crosshair is on a corpse.
 		SendBodyPrompt();
-	} else if (g_modifierHeld.load()) {
+	} else if (g_modifierHeld.load() && ModifierPhysicallyDown()) {
 		// Modifier already held as we look at the corpse — reveal immediately.
 		SuppressQuickLoot(true);
 		SendBodyPrompt();
+	} else if (g_modifierHeld.load()) {
+		// --Claude 2026-10-12: the flag outlived the key (its release never reached us).
+		g_modifierHeld.store(false);
 	}
 	// Otherwise the prompts stay hidden until the reveal modifier is pressed
 	// (ModifierInputSink) — so a corpse shows only its default (e.g. QuickLoot)
