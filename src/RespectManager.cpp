@@ -27,6 +27,9 @@ namespace
 	// "Remains" container (BuryTakeBodies.esp 0x836): a buried unique NPC's
 	// inventory waits in one of these in the holding cell until it is dug up.
 	RE::TESObjectCONT*          g_remains = nullptr;
+	// "Burial Urn" container (0x837, vanilla SBurialUrn01 model): used instead
+	// when the NPC was buried as an ash pile.
+	RE::TESObjectCONT*          g_remainsUrn = nullptr;
 
 	// Bumped on every new game / load. Work that waits (the dig animation, the
 	// bury-box check) holds FormIDs from the game it started in; a temporary ID
@@ -220,17 +223,20 @@ namespace
 	// A buried unique NPC keeps their belongings: everything they carried goes into
 	// a "Remains" container parked in our holding cell, linked to the grave, and
 	// Dig Up brings it back. The NPC itself is removed as before.
+	// Someone buried as an ash pile comes back up as a burial urn of their ashes.
 	// Returns the container's FormID, or 0 when the body is not a unique NPC.
-	RE::FormID CreateRemains(RE::TESObjectREFR* a_grave, RE::Actor* a_actor)
+	RE::FormID CreateRemains(RE::TESObjectREFR* a_grave, RE::Actor* a_actor, bool a_ashes)
 	{
 		auto* npc = a_actor ? a_actor->GetActorBase() : nullptr;
 		auto* marker = PickupManager::GetHoldingMarker();
-		if (!a_grave || !npc || !npc->IsUnique() || !g_remains || !marker) return 0;
+		auto* base = (a_ashes && g_remainsUrn) ? g_remainsUrn : g_remains;
+		if (!a_grave || !npc || !npc->IsUnique() || !base || !marker) return 0;
 
-		RE::NiPointer<RE::TESObjectREFR> remains = marker->PlaceObjectAtMe(g_remains, true);
+		RE::NiPointer<RE::TESObjectREFR> remains = marker->PlaceObjectAtMe(base, true);
 		if (!remains) return 0;
 		const char* name = a_actor->GetDisplayFullName();
-		remains->SetDisplayName(RE::BSFixedString(std::string("Remains of ") + (name && *name ? name : "the fallen")), true);
+		const std::string label = (base == g_remainsUrn) ? "Ashes of " : "Remains of ";
+		remains->SetDisplayName(RE::BSFixedString(label + (name && *name ? name : "the fallen")), true);
 		PickupManager::RegisterBuriedBody(a_grave->GetFormID(), remains->GetFormID());
 		return remains->GetFormID();
 	}
@@ -288,7 +294,7 @@ namespace
 			if (grave) {
 				StandGraveUpright(grave.get(), body);
 				grave->SetDisplayName(RE::BSFixedString(a_engraving), true);
-				remainsID = CreateRemains(grave.get(), actor);
+				remainsID = CreateRemains(grave.get(), actor, actor && actor != body);
 				logger::info("Bury: grave {:08X} for {:08X}, remains {:08X}", grave->GetFormID(), a_bodyID, remainsID);
 			} else {
 				logger::warn("Bury: PlaceObjectAtMe returned null for {:08X}", a_bodyID);
@@ -627,13 +633,14 @@ namespace RespectManager
 			g_animFurniture = dh->LookupForm<RE::TESFurniture>(0x000835, "BuryTakeBodies.esp");
 			// Container for a buried unique NPC's belongings.
 			g_remains = dh->LookupForm<RE::TESObjectCONT>(0x000836, "BuryTakeBodies.esp");
+			g_remainsUrn = dh->LookupForm<RE::TESObjectCONT>(0x000837, "BuryTakeBodies.esp");
 		}
 
 		BuryDialogSink::GetSingleton().Register();
 
-		logger::info("RespectManager: cleanupCell={} sound={} graveActivator={} remains={} UIExtensions={}",
+		logger::info("RespectManager: cleanupCell={} sound={} graveActivator={} remains={} urn={} UIExtensions={}",
 			g_cleanupCell != nullptr, g_soundForm != nullptr, g_graveActivator != nullptr,
-			g_remains != nullptr, g_hasUIExtensions);
+			g_remains != nullptr, g_remainsUrn != nullptr, g_hasUIExtensions);
 
 		if (!g_graveActivator) {
 			logger::warn("RespectManager: BuryTakeBodies.esp grave activator not found — "
@@ -817,8 +824,33 @@ namespace RespectManager
 				if (!g) return;
 				const RE::FormID remainsID = PickupManager::TakeBuriedBody(a_graveID);
 				if (auto* remains = RE::TESForm::LookupByID<RE::TESObjectREFR>(remainsID)) {
-					remains->MoveTo(g);
-					RE::DebugNotification("You dig up the remains.");
+					const bool urn = g_remainsUrn && remains->GetBaseObject() == g_remainsUrn;
+					if (urn) {
+						// A small urn on the grave's own spot could sit inside the headstone:
+						// set it on the ground in front of the grave, toward the player.
+						RE::NiPoint3 pos = g->GetPosition();
+						float heading = g->GetAngleZ();
+						if (auto* p = RE::PlayerCharacter::GetSingleton()) {
+							RE::NiPoint3 d = p->GetPosition() - pos;
+							d.z = 0.0f;
+							const float len = d.Length();
+							if (len > 1.0f) {
+								pos += d * ((std::min)(70.0f, len * 0.5f) / len);
+								heading = std::atan2(d.x, d.y);
+							}
+						}
+						if (auto* cell = g->GetParentCell(); cell && !cell->IsInteriorCell()) {
+							float land = 0.0f;
+							if (auto* tes = RE::TES::GetSingleton(); tes && tes->GetLandHeight(pos, land) &&
+								std::abs(land - pos.z) < 80.0f) {
+								pos.z = land;
+							}
+						}
+						MoveRefTo(remains, g->GetParentCell(), g->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, heading });
+					} else {
+						remains->MoveTo(g);
+					}
+					RE::DebugNotification(urn ? "You dig up a burial urn." : "You dig up the remains.");
 				}
 				PlayTurnUndeadSound();
 				g->Disable();

@@ -23,6 +23,8 @@ so a corpse behaves exactly as before until you ask for more.
   - A **unique NPC** keeps their belongings: everything they carried goes into
     their grave, and the grave's prompt reads **Dig Up** (Shift, hold E, needs a
     shovel). Digging brings up "Remains of <Name>", a container you can loot.
+    Someone you buried as an ash pile comes back up as a burial urn,
+    "Ashes of <Name>", set on the ground in front of the grave.
   - Anyone else: quest items come to you first, the rest goes with the body.
 - **Shift + E, tap → Resurrect** — brings the actor back (`resurrectResetInventory`
   decides whether they come back re-equipped or keep the looted inventory).
@@ -55,7 +57,7 @@ takes an item; it returns the moment you release Shift or look away.
 - **BuryTakeBodies.esp** — ships in this mod folder. ESL-flagged (header 1.70, so
   no BEES needed on older games), holding 50 corpse-token MiscObjects, a hidden
   holding cell (pick-up), the grave activator, the dig furniture and the
-  "Remains" container. **Enable it in your plugin list** or both Pick Up and Bury
+  "Remains" and "Burial Urn" containers. **Enable it in your plugin list** or both Pick Up and Bury
   stay disabled (Lay to Rest still works without it). No other plugins needed —
   Pay Your Respects is **not** required.
 - Disable the original *Press F To Pay Respects* AND *Collect Bodies* — this
