@@ -342,6 +342,7 @@ namespace PickupManager
 
 	void ExecuteCollect(RE::FormID a_refID)
 	{
+		if (!PFR::Settings::GetSingleton().collectEnabled.load()) return;
 		std::scoped_lock lk(g_mutex);
 
 		auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_refID);

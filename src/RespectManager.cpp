@@ -365,20 +365,11 @@ namespace RespectManager
 
 	void ExecuteResurrect(RE::FormID a_refID)
 	{
+		if (!PFR::Settings::GetSingleton().resurrectEnabled.load()) return;
 		auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_refID);
 		if (!ref) return;
 		auto* actor = ref->As<RE::Actor>();
 		if (!actor || !actor->IsDead()) return;
-
-		// Bandits, draugr and anyone else hostile to the player stay dead unless
-		// [Resurrect] resurrectHostile = true.
-		if (!PFR::Settings::GetSingleton().resurrectHostile.load()) {
-			auto* player = RE::PlayerCharacter::GetSingleton();
-			if (player && !actor->IsPlayerTeammate() && actor->IsHostileToActor(player)) {
-				RE::DebugNotification("You cannot bring back an enemy.");
-				return;
-			}
-		}
 
 		const bool reset = PFR::Settings::GetSingleton().resurrectResetInventory.load();
 		actor->Resurrect(reset, true);  // (resetInventory, attach3D)

@@ -75,9 +75,6 @@ resurrectEnabled = true
 ; true  = the actor comes back fully re-equipped (like console "resurrect 1").
 ; false = they keep their current (possibly looted) inventory.
 resurrectResetInventory = true
-; false = Resurrect refuses a body that was hostile to you (bandits, draugr,
-; anyone who fought you) and shows a notice. true = resurrect anyone.
-resurrectHostile = false
 
 [Grave]
 ; useDisplayName = true engraves the runtime name (Real Names / rename mods).
@@ -148,8 +145,6 @@ graveDestroyKey = 18
 			ini.GetBoolValue("Resurrect", "resurrectEnabled", resurrectEnabled.load()));
 		resurrectResetInventory.store(
 			ini.GetBoolValue("Resurrect", "resurrectResetInventory", resurrectResetInventory.load()));
-		resurrectHostile.store(
-			ini.GetBoolValue("Resurrect", "resurrectHostile", resurrectHostile.load()));
 
 		graveDestroyEnabled.store(
 			ini.GetBoolValue("Grave", "graveDestroyEnabled", graveDestroyEnabled.load()));
