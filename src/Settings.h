@@ -31,6 +31,8 @@ namespace PFR
 		// re-equipped (like console "resurrect 1"); false = keep their current
 		// (possibly looted) inventory (like bare "resurrect").
 		std::atomic<bool>    resurrectResetInventory{ true };
+		// false = never resurrect an actor that was hostile to the player.
+		std::atomic<bool>    resurrectHostile{ false };
 
 		// Destroy-grave: hold this MODIFIER while looking at one of our graves
 		// to reveal a "Destroy Grave" hold prompt on graveDestroyKey.  Hidden

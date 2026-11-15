@@ -140,12 +140,14 @@ namespace
 		// the target can be resurrected (a dead actor, not an ash pile) and at
 		// least one of its halves is enabled. --Claude 2026-10-04: the label drops
 		// a half switched off by [Resurrect] resurrectEnabled / [Collect] collectEnabled.
-		void BuildVisible(RE::FormID a_refID, bool a_wantB, bool a_resurrect, bool a_collect)
+		void BuildVisible(RE::FormID a_refID, bool a_wantA, bool a_wantB, bool a_resurrect, bool a_collect)
 		{
 			std::uint8_t n = 0;
-			m_visible[n] = m_templates[0];  // Pair A (Lay/Bury) always
-			m_visible[n].refid = a_refID;
-			++n;
+			if (a_wantA) {
+				m_visible[n] = m_templates[0];  // Pair A (Lay/Bury)
+				m_visible[n].refid = a_refID;
+				++n;
+			}
 			if (a_wantB && (a_resurrect || a_collect)) {
 				m_visible[n] = m_templates[1];  // Pair B (Resurrect/Take)
 				m_visible[n].refid = a_refID;
@@ -220,6 +222,7 @@ namespace
 	void SendBodyPrompt()
 	{
 		if (g_clientID == 0) return;
+		if (g_sink.m_promptCount.load() == 0) return;   // both keys set to -1
 		if (!g_showing.load()) {
 			(void)SkyPromptAPI::SendPrompt(&g_sink, g_clientID);
 			g_showing.store(true);
@@ -315,11 +318,13 @@ namespace
 			auto& s = PFR::Settings::GetSingleton();
 			const auto modKey = static_cast<std::uint32_t>(s.graveDestroyModifier.load());
 
+			bool sawModifier = false;
 			for (auto* e = *a_events; e; e = e->next) {
 				if (e->GetEventType() != RE::INPUT_EVENT_TYPE::kButton) continue;
 				auto* btn = e->AsButtonEvent();
 				if (!btn || btn->GetDevice() != RE::INPUT_DEVICE::kKeyboard) continue;
 				if (btn->GetIDCode() != modKey) continue;
+				sawModifier = true;
 
 				if (btn->IsDown()) {
 					g_modifierHeld.store(true);
@@ -335,6 +340,18 @@ namespace
 					RemoveGravePrompt();
 					SuppressQuickLoot(false);
 				}
+			}
+
+			// The Shift release can be lost (a one-frame tap reports no held time, so
+			// IsUp() is false; alt-tab or a menu can swallow it). Any later input -
+			// a mouse move is enough - re-reads the real key and drops prompts that
+			// are still up without it.
+			if (!sawModifier && (g_modifierHeld.load() || g_graveShowing.load() ||
+				(g_showing.load() && s.shiftGatesPrompts.load())) && !ModifierPhysicallyDown()) {
+				g_modifierHeld.store(false);
+				if (s.shiftGatesPrompts.load()) HideBodyPrompt();
+				RemoveGravePrompt();
+				SuppressQuickLoot(false);
 			}
 			return RE::BSEventNotifyControl::kContinue;
 		}
@@ -478,11 +495,15 @@ void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 
 	auto& s = PFR::Settings::GetSingleton();
 
-	// Pair A (Lay tap / Bury hold) always shows — Lay works on any corpse, and
+	// Pair A (Lay tap / Bury hold) shows unless its keys are -1 — Lay works on any corpse, and
 	// the shovel gate for Bury is enforced at execute time. Pair B (Resurrect
 	// tap / Take hold) shows only on a resurrectable dead actor (not an ash pile).
-	const bool wantB = RespectManager::CanResurrect(a_ref);
-	g_sink.BuildVisible(refID, wantB, s.resurrectEnabled.load(), s.collectEnabled.load());
+	// A pair whose keyboard AND gamepad keys are both -1 is switched off entirely
+	// (it used to show with "???" as its key).
+	const bool wantA = s.layKeyboard.load() >= 0 || s.layGamepad.load() >= 0;
+	const bool wantB = RespectManager::CanResurrect(a_ref) &&
+		(s.resurrectKeyboard.load() >= 0 || s.resurrectGamepad.load() >= 0);
+	g_sink.BuildVisible(refID, wantA, wantB, s.resurrectEnabled.load(), s.collectEnabled.load());
 
 	if (!s.shiftGatesPrompts.load()) {
 		// Always-on behaviour: show the prompts whenever the crosshair is on a corpse.

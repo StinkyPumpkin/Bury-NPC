@@ -51,6 +51,7 @@ buryAnimationDelay = 4.0
 ;   layToRest key  - TAP = Lay to Rest,  HOLD = Bury with Gravestone
 ;   resurrect key  - TAP = Resurrect,    HOLD = Take Body
 ; DX scancodes: F = 33 (0x21), E = 18 (0x12). Gamepad -1 = disabled.
+; A key set to -1 (keyboard AND gamepad) removes that whole prompt line.
 layToRestKeyboard = 33
 layToRestGamepad = -1
 resurrectKeyboard = 18
@@ -74,6 +75,9 @@ resurrectEnabled = true
 ; true  = the actor comes back fully re-equipped (like console "resurrect 1").
 ; false = they keep their current (possibly looted) inventory.
 resurrectResetInventory = true
+; false = Resurrect refuses a body that was hostile to you (bandits, draugr,
+; anyone who fought you) and shows a notice. true = resurrect anyone.
+resurrectHostile = false
 
 [Grave]
 ; useDisplayName = true engraves the runtime name (Real Names / rename mods).
@@ -144,6 +148,8 @@ graveDestroyKey = 18
 			ini.GetBoolValue("Resurrect", "resurrectEnabled", resurrectEnabled.load()));
 		resurrectResetInventory.store(
 			ini.GetBoolValue("Resurrect", "resurrectResetInventory", resurrectResetInventory.load()));
+		resurrectHostile.store(
+			ini.GetBoolValue("Resurrect", "resurrectHostile", resurrectHostile.load()));
 
 		graveDestroyEnabled.store(
 			ini.GetBoolValue("Grave", "graveDestroyEnabled", graveDestroyEnabled.load()));
