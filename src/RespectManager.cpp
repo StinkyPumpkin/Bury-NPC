@@ -770,6 +770,7 @@ namespace RespectManager
 			});
 			return;
 		}
+		if (!PFR::Settings::GetSingleton().graveDestroyEnabled.load()) return;
 
 		PlayTurnUndeadSound();
 		grave->Disable();

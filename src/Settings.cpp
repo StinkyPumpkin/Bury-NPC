@@ -90,6 +90,7 @@ useDisplayName = true
 ; stays clean. DX scancodes: LShift = 42, E = 18. Only affects this mod's graves.
 ; A buried UNIQUE NPC's grave reads "Dig Up" instead: everything they carried was
 ; kept, and digging brings up their remains to loot (needs a shovel like Bury).
+; graveDestroyEnabled = false hides Destroy Grave only; Dig Up stays available.
 graveDestroyEnabled = true
 graveDestroyModifier = 42
 graveDestroyKey = 18

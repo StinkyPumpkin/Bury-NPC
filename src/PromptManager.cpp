@@ -87,6 +87,22 @@ namespace
 	std::atomic<bool> g_armedA{ false };
 	std::atomic<bool> g_armedB{ false };
 
+	// The body a press started on. Turning to another corpse while the key is
+	// still down re-sends the prompts there, and the release would then have
+	// tapped (Lay to Rest / Resurrect) the NEW body. An action fires only on the
+	// body its press began on.
+	std::atomic<RE::FormID> g_pressRefA{ 0 };
+	std::atomic<RE::FormID> g_pressRefB{ 0 };
+
+	// True when this release/fill belongs to the press that started on a_refID;
+	// otherwise the press is dropped.
+	bool SamePress(std::atomic<bool>& a_armed, std::atomic<RE::FormID>& a_pressRef, RE::FormID a_refID)
+	{
+		if (a_refID != 0 && a_pressRef.load() == a_refID) return true;
+		a_armed.store(false);
+		return false;
+	}
+
 	void HideBodyPrompt();
 
 	// The DirectInput state array read directly (calling BSWin32KeyboardDevice::IsPressed
@@ -182,7 +198,6 @@ namespace
 		void ProcessEvent(SkyPromptAPI::PromptEvent a_event) const override
 		{
 			const RE::FormID refID = g_currentRefID.load();
-			if (refID == 0) return;
 
 			const auto action = a_event.prompt.actionID;
 			const auto etype  = a_event.type;
@@ -194,13 +209,16 @@ namespace
 			if (action == ACTION_PAIR_A) {
 				if (etype == ET::kDown) {
 					g_holdFiredA.store(false);
-					g_armedA.store(RevealSatisfied());
-					if (!g_armedA.load()) ClearStaleReveal();
+					g_pressRefA.store(refID);
+					g_armedA.store(refID != 0 && RevealSatisfied());
+					if (refID != 0 && !g_armedA.load()) ClearStaleReveal();
 				} else if (etype == ET::kAccepted) {          // hold → Bury
+					if (!SamePress(g_armedA, g_pressRefA, refID)) return;
 					if (!g_armedA.load()) return;
 					g_holdFiredA.store(true);
 					task->AddTask([refID]() { RespectManager::ExecuteBury(refID); });
 				} else if (etype == ET::kUp) {                // release
+					if (!SamePress(g_armedA, g_pressRefA, refID)) return;
 					if (!g_armedA.exchange(false)) return;
 					if (!g_holdFiredA.exchange(false)) {      // no hold fired → tap → Lay
 						task->AddTask([refID]() { RespectManager::ExecuteLayToRest(refID); });
@@ -210,15 +228,18 @@ namespace
 				auto& s = PFR::Settings::GetSingleton();
 				if (etype == ET::kDown) {
 					g_holdFiredB.store(false);
-					g_armedB.store(RevealSatisfied());
-					if (!g_armedB.load()) ClearStaleReveal();
+					g_pressRefB.store(refID);
+					g_armedB.store(refID != 0 && RevealSatisfied());
+					if (refID != 0 && !g_armedB.load()) ClearStaleReveal();
 				} else if (etype == ET::kAccepted) {          // hold → Take Body
+					if (!SamePress(g_armedB, g_pressRefB, refID)) return;
 					if (!g_armedB.load()) return;
 					g_holdFiredB.store(true);
 					if (s.collectEnabled.load()) {
 						task->AddTask([refID]() { PickupManager::ExecuteCollect(refID); });
 					}
 				} else if (etype == ET::kUp) {                // release
+					if (!SamePress(g_armedB, g_pressRefB, refID)) return;
 					if (!g_armedB.exchange(false)) return;
 					if (!g_holdFiredB.exchange(false)) {      // no hold fired → tap → Resurrect
 						if (s.resurrectEnabled.load()) {
@@ -292,16 +313,19 @@ namespace
 	void SendGravePrompt()
 	{
 		if (g_clientID == 0) return;
-		if (!PFR::Settings::GetSingleton().graveDestroyEnabled.load()) return;
 		RE::FormID graveID = g_currentGraveID.load();
 		if (graveID == 0) return;
+		// graveDestroyEnabled = false hides Destroy Grave, but a grave holding a
+		// unique NPC's remains can still be dug up - otherwise their things are lost.
+		const bool hasRemains = RespectManager::GraveHasRemains(graveID);
+		if (!PFR::Settings::GetSingleton().graveDestroyEnabled.load() && !hasRemains) return;
 		// refid 0 = not anchored to the grave's on-screen position (a grave sits
 		// on the ground, which would drag the prompt to the bottom of the
 		// screen / off the left edge).  With 0 it renders at the theme's fixed
 		// centre.  We track the target grave in g_currentGraveID, not refid.
 		g_graveSink.m_prompt.refid = 0;
 		// A grave holding a unique NPC's remains is dug up instead of destroyed.
-		g_graveSink.m_prompt.text = RespectManager::GraveHasRemains(graveID) ? "Dig Up" : "Destroy Grave";
+		g_graveSink.m_prompt.text = hasRemains ? "Dig Up" : "Destroy Grave";
 		(void)SkyPromptAPI::SendPrompt(&g_graveSink, g_clientID);
 		g_graveShowing.store(true);
 	}
@@ -556,7 +580,8 @@ void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 void PromptManager::ShowGraveForRef(RE::TESObjectREFR* a_ref)
 {
 	if (!a_ref || g_clientID == 0) return;
-	if (!PFR::Settings::GetSingleton().graveDestroyEnabled.load()) return;
+	if (!PFR::Settings::GetSingleton().graveDestroyEnabled.load() &&
+		!RespectManager::GraveHasRemains(a_ref->GetFormID())) return;
 
 	// Grave and body prompts are mutually exclusive.
 	HideBodyPrompt();
