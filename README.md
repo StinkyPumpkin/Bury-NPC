@@ -24,7 +24,8 @@ so a corpse behaves exactly as before until you ask for more.
     their grave, and the grave's prompt reads **Dig Up** (Shift, hold E, needs a
     shovel). Digging brings up "Remains of <Name>", a container you can loot.
     Someone you buried as an ash pile comes back up as a burial urn,
-    "Ashes of <Name>", set on the ground in front of the grave.
+    "Ashes of <Name>", set on the ground in front of the grave. The urn
+    disappears once you have emptied it.
   - Anyone else: quest items come to you first, the rest goes with the body.
 - **Shift + E, tap → Resurrect** — brings the actor back (`resurrectResetInventory`
   decides whether they come back re-equipped or keep the looted inventory).

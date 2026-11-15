@@ -691,6 +691,91 @@ namespace
 			return RE::BSEventNotifyControl::kContinue;
 		}
 	};
+
+	// ------------------------------------------------------------------
+	// A dug-up burial urn goes away once it has been emptied: when the
+	// container menu on it closes, or after a take that opens no menu
+	// (QuickLoot). The skeleton Remains stay as they are.
+	// ------------------------------------------------------------------
+	bool IsUrn(RE::TESObjectREFR* a_ref)
+	{
+		return a_ref && g_remainsUrn && a_ref->GetBaseObject() == g_remainsUrn;
+	}
+
+	void RemoveUrnIfEmpty(RE::FormID a_urnID)
+	{
+		auto* urn = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_urnID);
+		if (!IsUrn(urn) || urn->IsDisabled()) return;
+		for (const auto& [obj, count] : urn->GetInventoryCounts()) {
+			if (count > 0) return;
+		}
+		urn->Disable();
+		urn->SetDelete(true);
+		logger::info("Urn {:08X} is empty - removed", a_urnID);
+	}
+
+	class UrnSink :
+		public RE::BSTEventSink<RE::MenuOpenCloseEvent>,
+		public RE::BSTEventSink<RE::TESContainerChangedEvent>
+	{
+	public:
+		static UrnSink& GetSingleton()
+		{
+			static UrnSink instance;
+			return instance;
+		}
+
+		void Register()
+		{
+			if (auto* ui = RE::UI::GetSingleton()) {
+				ui->AddEventSink<RE::MenuOpenCloseEvent>(this);
+			}
+			if (auto* holder = RE::ScriptEventSourceHolder::GetSingleton()) {
+				holder->AddEventSink<RE::TESContainerChangedEvent>(this);
+			}
+		}
+
+		RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event,
+			RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
+		{
+			if (!a_event || a_event->menuName != RE::ContainerMenu::MENU_NAME) {
+				return RE::BSEventNotifyControl::kContinue;
+			}
+			if (a_event->opening) {
+				auto target = RE::TESObjectREFR::LookupByHandle(RE::ContainerMenu::GetTargetRefHandle());
+				_menuUrn.store(IsUrn(target.get()) ? target->GetFormID() : 0);
+			} else if (const RE::FormID id = _menuUrn.exchange(0)) {
+				QueueCheck(id);
+			}
+			return RE::BSEventNotifyControl::kContinue;
+		}
+
+		RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent* a_event,
+			RE::BSTEventSource<RE::TESContainerChangedEvent>*) override
+		{
+			if (!a_event || !a_event->oldContainer || !g_remainsUrn) {
+				return RE::BSEventNotifyControl::kContinue;
+			}
+			// While its container menu is open, the menu's close does the check.
+			if (a_event->oldContainer == _menuUrn.load()) {
+				return RE::BSEventNotifyControl::kContinue;
+			}
+			if (IsUrn(RE::TESForm::LookupByID<RE::TESObjectREFR>(a_event->oldContainer))) {
+				QueueCheck(a_event->oldContainer);
+			}
+			return RE::BSEventNotifyControl::kContinue;
+		}
+
+	private:
+		static void QueueCheck(RE::FormID a_id)
+		{
+			if (auto* task = SKSE::GetTaskInterface()) {
+				task->AddTask([a_id]() { RemoveUrnIfEmpty(a_id); });
+			}
+		}
+
+		std::atomic<RE::FormID> _menuUrn{ 0 };
+	};
 }
 
 namespace RespectManager
@@ -717,6 +802,7 @@ namespace RespectManager
 		}
 
 		BuryDialogSink::GetSingleton().Register();
+		UrnSink::GetSingleton().Register();
 
 		logger::info("RespectManager: cleanupCell={} sound={} graveActivator={} remains={} urn={} UIExtensions={}",
 			g_cleanupCell != nullptr, g_soundForm != nullptr, g_graveActivator != nullptr,
