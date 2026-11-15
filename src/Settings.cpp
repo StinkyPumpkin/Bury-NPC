@@ -56,6 +56,12 @@ layToRestKeyboard = 33
 layToRestGamepad = -1
 resurrectKeyboard = 18
 resurrectGamepad = -1
+; CONTROLLER: revealGamepad is the button you HOLD to reveal the prompts (the
+; controller's Shift); layToRestGamepad / resurrectGamepad are then tapped or held
+; like F / E. Codes: 266 D-Up, 267 D-Down, 268 D-Left, 269 D-Right, 270 Start,
+; 271 Back, 272 LS click, 273 RS click, 274 LB, 275 RB, 276 A, 277 B, 278 X,
+; 279 Y, 280 LT, 281 RT. -1 = off. The button keeps its normal game action too.
+revealGamepad = -1
 ; buryKeyboard / collectKeyboard are NO LONGER USED - Bury is the HOLD of the
 ; layToRest key, and Take Body is the HOLD of the resurrect key.
 buryKeyboard = 19
@@ -94,6 +100,8 @@ useDisplayName = true
 graveDestroyEnabled = true
 graveDestroyModifier = 42
 graveDestroyKey = 18
+; controller button for Destroy Grave / Dig Up (hold revealGamepad first). -1 = off.
+graveDestroyGamepad = -1
 )INI";
 
 		void WriteDefaultIniIfMissing(const std::filesystem::path& a_path)
@@ -150,6 +158,8 @@ graveDestroyKey = 18
 			ini.GetLongValue("Hotkeys", "resurrectKeyboard", resurrectKeyboard.load())));
 		resurrectGamepad.store(static_cast<int32_t>(
 			ini.GetLongValue("Hotkeys", "resurrectGamepad", resurrectGamepad.load())));
+		revealGamepad.store(static_cast<int32_t>(
+			ini.GetLongValue("Hotkeys", "revealGamepad", revealGamepad.load())));
 		resurrectEnabled.store(
 			ini.GetBoolValue("Resurrect", "resurrectEnabled", resurrectEnabled.load()));
 		resurrectResetInventory.store(
@@ -161,6 +171,8 @@ graveDestroyKey = 18
 			ini.GetLongValue("Grave", "graveDestroyModifier", graveDestroyModifier.load())));
 		graveDestroyKey.store(static_cast<int32_t>(
 			ini.GetLongValue("Grave", "graveDestroyKey", graveDestroyKey.load())));
+		graveDestroyGamepad.store(static_cast<int32_t>(
+			ini.GetLongValue("Grave", "graveDestroyGamepad", graveDestroyGamepad.load())));
 
 		useDisplayName.store(
 			ini.GetBoolValue("Grave", "useDisplayName", useDisplayName.load()));

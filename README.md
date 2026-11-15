@@ -61,8 +61,13 @@ takes an item; it returns the moment you release Shift or look away.
 - Disable the original *Press F To Pay Respects* AND *Collect Bodies* — this
   replaces both.
 - Game versions: SE 1.5.97 and AE 1.6.x (Steam and GOG) through Address Library.
-  VR is built in but untested. Shift is a keyboard key: on a controller set
-  `shiftGatesPrompts = false` and give the gamepad keys a button.
+  VR is built in but untested.
+- **Controller:** set `revealGamepad` (the button you hold, the controller's
+  Shift), `layToRestGamepad` / `resurrectGamepad` (tap/hold like F / E) and
+  `graveDestroyGamepad`. Codes: 266 D-Up, 267 D-Down, 268 D-Left, 269 D-Right,
+  270 Start, 271 Back, 272 LS, 273 RS, 274 LB, 275 RB, 276 A, 277 B, 278 X, 279 Y,
+  280 LT, 281 RT; -1 = off (the default). The held button is read straight from
+  XInput, so a missed release can't leave the prompts stuck.
 
 ## How pick-up works (internals)
 
@@ -83,7 +88,7 @@ time it runs (under MO2 it lands in `overwrite`), so an update never resets your
   (default true — hide QuickLoot IE's loot list while the modifier is held).
 - `[Hotkeys]` `layToRestKeyboard` (default 33 = F: tap Lay / hold Bury),
   `resurrectKeyboard` (default 18 = E: tap Resurrect / hold Take), plus gamepad
-  variants (-1 = off). `buryKeyboard` / `collectKeyboard` are kept for old INIs
+  variants and `revealGamepad` (-1 = off). `buryKeyboard` / `collectKeyboard` are kept for old INIs
   but unused since the two-key layout.
 - `[Bury]` `requiresShovel` (default true), `buryAnimation` (default true),
   `buryAnimationDelay` (seconds the dig plays, default 4).
@@ -92,7 +97,7 @@ time it runs (under MO2 it lands in `overwrite`), so an update never resets your
 - `[Grave]` `useDisplayName` (default true — engrave the runtime display name;
   false = base-object name like "Bandit"), `graveDestroyEnabled` (default true),
   `graveDestroyModifier` (default 42 = LShift, also the corpse reveal key),
-  `graveDestroyKey` (default 18 = E).
+  `graveDestroyKey` (default 18 = E), `graveDestroyGamepad` (default -1).
 - `[Collect]` `collectEnabled` (default true — false removes the Take hold),
   `followersCarryBodies` (default true — bodies weigh 0 while trading with a
   follower so they can be handed over).

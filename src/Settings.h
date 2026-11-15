@@ -29,6 +29,9 @@ namespace PFR
 		// Resurrect/Take pair key (tap = Resurrect, hold = Take Body).  E = 0x12 (18).
 		std::atomic<int32_t> resurrectKeyboard{ 18 };
 		std::atomic<int32_t> resurrectGamepad{ -1 };
+		// Controller button held to reveal the prompts (the controller's Shift).
+		// SKSE gamepad keycode 266-281; -1 = none.
+		std::atomic<int32_t> revealGamepad{ -1 };
 		std::atomic<bool>    resurrectEnabled{ true };
 		// Reset the actor's inventory on resurrect: true = they come back fully
 		// re-equipped (like console "resurrect 1"); false = keep their current
@@ -41,6 +44,8 @@ namespace PFR
 		std::atomic<bool>    graveDestroyEnabled{ true };
 		std::atomic<int32_t> graveDestroyModifier{ 42 };
 		std::atomic<int32_t> graveDestroyKey{ 18 };
+		// Controller button for Destroy Grave / Dig Up (held with revealGamepad).
+		std::atomic<int32_t> graveDestroyGamepad{ -1 };
 
 		// When true the grave engraves the runtime display name
 		// (Real Names / any rename mod).  When false, the base-object name

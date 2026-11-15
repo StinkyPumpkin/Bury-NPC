@@ -6,6 +6,8 @@
 #include "QuickLootAPI.h"      // QuickLoot IE 3.x request API (SKSE messaging), header-only
 #include "QuickLootAPI_v4.h"   // QuickLoot IE 4.x exported-interface API (MIT), header-only
 
+#include <Xinput.h>             // XINPUT_STATE only; XInputGetState is looked up at runtime
+
 namespace
 {
 	// SkyPrompt groups prompts that share an eventID into ONE row (they overlap
@@ -107,7 +109,7 @@ namespace
 
 	// The DirectInput state array read directly (calling BSWin32KeyboardDevice::IsPressed
 	// links CommonLib's device object, whose virtuals it never defines - see TETHER Gate.cpp).
-	bool ModifierPhysicallyDown()
+	bool KeyboardRevealDown()
 	{
 		const auto key = static_cast<std::uint32_t>(PFR::Settings::GetSingleton().graveDestroyModifier.load());
 		if (key == 0 || key >= 256) return false;
@@ -116,6 +118,63 @@ namespace
 		if (!kb) return false;
 		const auto& keys = kb->curState;   // this CommonLib keeps curState as a plain member
 		return key < sizeof(keys) && (keys[key] & 0x80) != 0;
+	}
+
+	// ---- Controller reveal (revealGamepad, SKSE gamepad keycode 266-281) ----
+	// The engine's gamepad ButtonEvent carries the XInput button mask; triggers
+	// come through as 0x9 (LT) / 0xA (RT).
+	constexpr std::uint32_t kPadMasks[16] = {
+		0x0001, 0x0002, 0x0004, 0x0008,   // 266-269 D-pad up/down/left/right
+		0x0010, 0x0020, 0x0040, 0x0080,   // 270-273 Start, Back, LS, RS
+		0x0100, 0x0200, 0x1000, 0x2000,   // 274-277 LB, RB, A, B
+		0x4000, 0x8000, 0x0009, 0x000A    // 278-281 X, Y, LT, RT
+	};
+
+	std::uint32_t PadKeycodeToMask(std::int32_t a_keycode)
+	{
+		if (a_keycode < 266 || a_keycode > 281) return 0;
+		return kPadMasks[a_keycode - 266];
+	}
+
+	// The real button state straight from XInput (controller 0), so a lost
+	// release can't leave the reveal stuck - the same reason the keyboard side
+	// reads curState. Loaded at runtime: no import-library dependency.
+	using XInputGetState_t = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
+	XInputGetState_t GetXInputGetState()
+	{
+		static XInputGetState_t fn = []() -> XInputGetState_t {
+			for (const wchar_t* dll : { L"xinput1_4.dll", L"xinput1_3.dll", L"xinput9_1_0.dll" }) {
+				HMODULE mod = ::GetModuleHandleW(dll);
+				if (!mod) mod = ::LoadLibraryW(dll);
+				if (mod) {
+					if (auto p = reinterpret_cast<XInputGetState_t>(::GetProcAddress(mod, "XInputGetState"))) return p;
+				}
+			}
+			return nullptr;
+		}();
+		return fn;
+	}
+
+	std::atomic<bool> g_padRevealSeen{ false };   // fallback when XInput can't be read
+
+	bool PadRevealDown()
+	{
+		const std::int32_t code = PFR::Settings::GetSingleton().revealGamepad.load();
+		const std::uint32_t mask = PadKeycodeToMask(code);
+		if (mask == 0) return false;
+		auto getState = GetXInputGetState();
+		if (!getState) return g_padRevealSeen.load();
+		XINPUT_STATE st{};
+		if (getState(0, &st) != ERROR_SUCCESS) return false;
+		if (code == 280) return st.Gamepad.bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD;
+		if (code == 281) return st.Gamepad.bRightTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD;
+		return (st.Gamepad.wButtons & mask) != 0;
+	}
+
+	// Shift on the keyboard OR the reveal button on the controller.
+	bool ModifierPhysicallyDown()
+	{
+		return KeyboardRevealDown() || PadRevealDown();
 	}
 
 	// A press is allowed when Shift-gating is off, or the reveal key is really down now.
@@ -359,11 +418,20 @@ namespace
 			const auto modKey = static_cast<std::uint32_t>(s.graveDestroyModifier.load());
 
 			bool sawModifier = false;
+			const std::uint32_t padMask = PadKeycodeToMask(s.revealGamepad.load());
 			for (auto* e = *a_events; e; e = e->next) {
 				if (e->GetEventType() != RE::INPUT_EVENT_TYPE::kButton) continue;
 				auto* btn = e->AsButtonEvent();
-				if (!btn || btn->GetDevice() != RE::INPUT_DEVICE::kKeyboard) continue;
-				if (btn->GetIDCode() != modKey) continue;
+				if (!btn) continue;
+				const auto device = btn->GetDevice();
+				if (device == RE::INPUT_DEVICE::kKeyboard) {
+					if (btn->GetIDCode() != modKey) continue;
+				} else if (device == RE::INPUT_DEVICE::kGamepad) {
+					if (padMask == 0 || btn->GetIDCode() != padMask) continue;
+					g_padRevealSeen.store(btn->IsPressed());
+				} else {
+					continue;
+				}
 				sawModifier = true;
 
 				if (btn->IsDown()) {
@@ -374,7 +442,7 @@ namespace
 					} else if (g_currentGraveID.load() != 0) {
 						SendGravePrompt();
 					}
-				} else if (btn->IsUp()) {
+				} else if (btn->IsUp() && !ModifierPhysicallyDown()) {   // the other reveal may still be held
 					g_modifierHeld.store(false);
 					if (s.shiftGatesPrompts.load()) HideBodyPrompt();
 					RemoveGravePrompt();
@@ -422,7 +490,7 @@ namespace
 		g_graveKeys[0] = { RE::INPUT_DEVICE::kKeyboard,
 			static_cast<SkyPromptAPI::ButtonID>(s.graveDestroyKey.load()) };
 		g_graveKeys[1] = { RE::INPUT_DEVICE::kGamepad,
-			static_cast<SkyPromptAPI::ButtonID>(-1) };
+			static_cast<SkyPromptAPI::ButtonID>(s.graveDestroyGamepad.load()) };
 		g_graveSink.m_prompt.button_key =
 			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_graveKeys, 2);
 	}
@@ -516,6 +584,12 @@ void PromptManager::Init()
 		PFR::Settings::GetSingleton().layKeyboard.load(),
 		PFR::Settings::GetSingleton().resurrectKeyboard.load(),
 		PFR::Settings::GetSingleton().shiftGatesPrompts.load());
+	logger::info("PromptManager: controller reveal={} (Lay/Bury pad={} Res/Take pad={} grave pad={}) XInput={}",
+		PFR::Settings::GetSingleton().revealGamepad.load(),
+		PFR::Settings::GetSingleton().layGamepad.load(),
+		PFR::Settings::GetSingleton().resurrectGamepad.load(),
+		PFR::Settings::GetSingleton().graveDestroyGamepad.load(),
+		GetXInputGetState() ? "yes" : "no");
 }
 
 void PromptManager::Shutdown()
