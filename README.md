@@ -22,7 +22,11 @@ so a corpse behaves exactly as before until you ask for more.
   stands upright on the ground, turned toward you.
   - A **unique NPC** keeps their belongings: everything they carried goes into
     their grave, and the grave's prompt reads **Dig Up** (Shift, hold E, needs a
-    shovel). Digging brings up "Remains of <Name>", a container you can loot.
+    shovel). Digging brings up their remains: a dead draugr called
+    "Remains of <Name>" carrying everything they were buried with, lying in
+    front of the grave with full ragdoll physics. Loot it like any body, carry
+    it with Take Body, or Bury it again (a grave that can be dug up once more).
+    It is never cleaned up and cannot be resurrected.
     Someone you buried as an ash pile comes back up as a burial urn,
     "Ashes of <Name>", set on the ground in front of the grave. Once you have
     emptied it, the urn becomes a jar of their ashes, "Ashes of <Name>", an
@@ -60,7 +64,8 @@ takes an item; it returns the moment you release Shift or look away.
 - **BuryTakeBodies.esp** — ships in this mod folder. ESL-flagged (header 1.70, so
   no BEES needed on older games), holding 50 corpse-token MiscObjects, a hidden
   holding cell (pick-up), the grave activator, the dig furniture and the
-  "Remains" and "Burial Urn" containers and the "Ashes" jar. **Enable it in your plugin list** or both Pick Up and Bury
+  "Remains" and "Burial Urn" containers, the "Ashes" jar and the "Remains"
+  draugr. **Enable it in your plugin list** or both Pick Up and Bury
   stay disabled (Lay to Rest still works without it). No other plugins needed —
   Pay Your Respects is **not** required.
 - Disable the original *Press F To Pay Respects* AND *Collect Bodies* — this

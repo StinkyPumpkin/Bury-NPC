@@ -32,6 +32,8 @@ namespace
 	RE::TESObjectCONT*          g_remainsUrn = nullptr;
 	// "Ashes" jar item (0x838, same canopic jar model): what an emptied urn becomes.
 	RE::TESObjectMISC*          g_ashesJar = nullptr;
+	// Dead draugr (0x839, PFR_RemainsDraugr) a buried corpse is dug up as.
+	RE::TESNPC*                 g_remainsDraugr = nullptr;
 
 	// Bumped on every new game / load. Work that waits (the dig animation, the
 	// bury-box check) holds FormIDs from the game it started in; a temporary ID
@@ -148,6 +150,25 @@ namespace
 		if (!a_ref) return nullptr;
 		if (auto* actor = a_ref->As<RE::Actor>()) return actor;
 		return AshPileActor(a_ref);
+	}
+
+	// A dead draugr this mod raised from a grave ("Remains of <Name>").
+	bool IsRemainsDraugr(RE::TESObjectREFR* a_ref)
+	{
+		auto* actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
+		return actor && g_remainsDraugr && actor->GetActorBase() == g_remainsDraugr;
+	}
+
+	// The dead person's own display name. A raised draugr is called "Remains of
+	// <Name>"; that prefix is dropped, so burying it again engraves the name and
+	// digging it up again does not stack "Remains of Remains of".
+	std::string DeadNameOf(RE::TESObjectREFR* a_ref)
+	{
+		std::string name;
+		if (const char* n = a_ref ? a_ref->GetDisplayFullName() : nullptr) name = n;
+		constexpr std::string_view prefix = "Remains of ";
+		if (IsRemainsDraugr(a_ref) && name.starts_with(prefix)) name.erase(0, prefix.size());
+		return name;
 	}
 
 	struct ItemMove
@@ -326,9 +347,9 @@ namespace
 
 		RE::NiPointer<RE::TESObjectREFR> remains = marker->PlaceObjectAtMe(base, true);
 		if (!remains) return 0;
-		const char* name = a_actor->GetDisplayFullName();
+		const std::string name = DeadNameOf(a_actor);
 		const std::string label = (base == g_remainsUrn) ? "Ashes of " : "Remains of ";
-		remains->SetDisplayName(RE::BSFixedString(label + (name && *name ? name : "the fallen")), true);
+		remains->SetDisplayName(RE::BSFixedString(label + (name.empty() ? "the fallen" : name)), true);
 		PickupManager::RegisterBuriedBody(a_grave->GetFormID(), remains->GetFormID());
 		return remains->GetFormID();
 	}
@@ -741,6 +762,68 @@ namespace
 		logger::info("Urn {:08X} emptied - replaced by ashes jar {:08X}", a_urnID, jarID);
 	}
 
+	// Where dug-up remains come to rest: on the ground in front of the grave,
+	// toward the player (on the grave's own spot they would sit inside the
+	// headstone). a_heading gets the direction facing the player.
+	RE::NiPoint3 SpotBeforeGrave(RE::TESObjectREFR* a_grave, float& a_heading)
+	{
+		RE::NiPoint3 pos = a_grave->GetPosition();
+		a_heading = a_grave->GetAngleZ();
+		if (auto* p = RE::PlayerCharacter::GetSingleton()) {
+			RE::NiPoint3 d = p->GetPosition() - pos;
+			d.z = 0.0f;
+			const float len = d.Length();
+			if (len > 1.0f) {
+				pos += d * ((std::min)(70.0f, len * 0.5f) / len);
+				a_heading = std::atan2(d.x, d.y);
+			}
+		}
+		if (auto* cell = a_grave->GetParentCell(); cell && !cell->IsInteriorCell()) {
+			float land = 0.0f;
+			if (auto* tes = RE::TES::GetSingleton(); tes && tes->GetLandHeight(pos, land) &&
+				std::abs(land - pos.z) < 80.0f) {
+				pos.z = land;
+			}
+		}
+		return pos;
+	}
+
+	// A buried corpse comes back up as a dead draugr named "Remains of <Name>"
+	// carrying what was buried with them: a real body with ragdoll physics, so
+	// Take Body, Bury and Lay to Rest all work on it. It is permanent and is
+	// never cleaned up. It is killed in the same task it is placed in, before it
+	// is drawn or its AI gets a turn, with no killer (no crime). The belongings
+	// move from the hidden Remains container (nothing worn) into a fresh corpse.
+	bool RaiseRemainsDraugr(RE::TESObjectREFR* a_remains, RE::TESObjectREFR* a_grave)
+	{
+		if (!g_remainsDraugr || !a_remains || !a_grave) return false;
+		RE::NiPointer<RE::TESObjectREFR> ref = a_grave->PlaceObjectAtMe(g_remainsDraugr, true);
+		auto* draugr = ref ? ref->As<RE::Actor>() : nullptr;
+		if (!draugr) return false;
+
+		float heading = 0.0f;
+		RE::NiPoint3 pos = SpotBeforeGrave(a_grave, heading);
+		pos.z += 20.0f;   // drop onto the ground rather than start inside it
+		MoveRefTo(draugr, a_grave->GetParentCell(), a_grave->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, heading });
+		draugr->KillImpl(nullptr, 0.0f, true, true);
+
+		const char* name = a_remains->GetDisplayFullName();
+		draugr->SetDisplayName(RE::BSFixedString(name && *name ? name : "Remains"), true);
+
+		std::vector<std::pair<RE::TESBoundObject*, std::int32_t>> stacks;
+		for (const auto& [obj, count] : a_remains->GetInventoryCounts()) {
+			if (obj && count > 0) stacks.emplace_back(obj, count);
+		}
+		for (const auto& [obj, count] : stacks) {
+			a_remains->RemoveItem(obj, count, RE::ITEM_REMOVE_REASON::kStoreInContainer, nullptr, draugr);
+		}
+		a_remains->Disable();
+		a_remains->SetDelete(true);
+		logger::info("Dig Up: remains {:08X} raised as dead draugr {:08X} ({} item types)",
+			a_remains->GetFormID(), draugr->GetFormID(), stacks.size());
+		return true;
+	}
+
 	class UrnSink :
 		public RE::BSTEventSink<RE::MenuOpenCloseEvent>,
 		public RE::BSTEventSink<RE::TESContainerChangedEvent>
@@ -827,14 +910,16 @@ namespace RespectManager
 			g_remains = dh->LookupForm<RE::TESObjectCONT>(0x000836, "BuryTakeBodies.esp");
 			g_remainsUrn = dh->LookupForm<RE::TESObjectCONT>(0x000837, "BuryTakeBodies.esp");
 			g_ashesJar = dh->LookupForm<RE::TESObjectMISC>(0x000838, "BuryTakeBodies.esp");
+			g_remainsDraugr = dh->LookupForm<RE::TESNPC>(0x000839, "BuryTakeBodies.esp");
 		}
 
 		BuryDialogSink::GetSingleton().Register();
 		UrnSink::GetSingleton().Register();
 
-		logger::info("RespectManager: cleanupCell={} sound={} graveActivator={} remains={} urn={} jar={} UIExtensions={}",
+		logger::info("RespectManager: cleanupCell={} sound={} graveActivator={} remains={} urn={} jar={} draugr={} UIExtensions={}",
 			g_cleanupCell != nullptr, g_soundForm != nullptr, g_graveActivator != nullptr,
-			g_remains != nullptr, g_remainsUrn != nullptr, g_ashesJar != nullptr, g_hasUIExtensions);
+			g_remains != nullptr, g_remainsUrn != nullptr, g_ashesJar != nullptr, g_remainsDraugr != nullptr,
+			g_hasUIExtensions);
 
 		if (!g_graveActivator) {
 			logger::warn("RespectManager: BuryTakeBodies.esp grave activator not found — "
@@ -866,6 +951,13 @@ namespace RespectManager
 		return actor && actor->IsDead();  // ash piles / non-actors excluded
 	}
 
+	// A raised draugr would come back as a hostile draugr named after the dead,
+	// so its prompt offers Take Body only.
+	bool IsRaisedRemains(RE::TESObjectREFR* a_ref)
+	{
+		return IsRemainsDraugr(a_ref);
+	}
+
 	// Public wrapper for the crosshair sink; the test itself lives in the
 	// anonymous namespace beside IsValidCorpse.
 	bool IsAshPile(RE::TESObjectREFR* a_ref)
@@ -879,7 +971,7 @@ namespace RespectManager
 		auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_refID);
 		if (!ref) return;
 		auto* actor = ref->As<RE::Actor>();
-		if (!actor || !actor->IsDead()) return;
+		if (!actor || !actor->IsDead() || IsRemainsDraugr(actor)) return;
 
 		const bool reset = PFR::Settings::GetSingleton().resurrectResetInventory.load();
 		actor->Resurrect(reset, true);  // (resetInventory, attach3D)
@@ -943,7 +1035,7 @@ namespace RespectManager
 		if (!named) named = ref;
 		std::string deadName;
 		if (settings.useDisplayName.load()) {
-			deadName = named->GetDisplayFullName();
+			deadName = DeadNameOf(named);
 		}
 		if (deadName.empty()) {
 			if (auto* base = named->GetBaseObject()) deadName = base->GetName();
@@ -1027,34 +1119,18 @@ namespace RespectManager
 				if (!g) return;
 				const RE::FormID remainsID = PickupManager::TakeBuriedBody(a_graveID);
 				if (auto* remains = RE::TESForm::LookupByID<RE::TESObjectREFR>(remainsID)) {
-					const bool urn = g_remainsUrn && remains->GetBaseObject() == g_remainsUrn;
-					if (urn) {
-						// A small urn on the grave's own spot could sit inside the headstone:
-						// set it on the ground in front of the grave, toward the player.
-						RE::NiPoint3 pos = g->GetPosition();
-						float heading = g->GetAngleZ();
-						if (auto* p = RE::PlayerCharacter::GetSingleton()) {
-							RE::NiPoint3 d = p->GetPosition() - pos;
-							d.z = 0.0f;
-							const float len = d.Length();
-							if (len > 1.0f) {
-								pos += d * ((std::min)(70.0f, len * 0.5f) / len);
-								heading = std::atan2(d.x, d.y);
-							}
-						}
-						if (auto* cell = g->GetParentCell(); cell && !cell->IsInteriorCell()) {
-							float land = 0.0f;
-							if (auto* tes = RE::TES::GetSingleton(); tes && tes->GetLandHeight(pos, land) &&
-								std::abs(land - pos.z) < 80.0f) {
-								pos.z = land;
-							}
-						}
+					if (g_remainsUrn && remains->GetBaseObject() == g_remainsUrn) {
+						float heading = 0.0f;
+						RE::NiPoint3 pos = SpotBeforeGrave(g, heading);
 						pos.z += 10.0f;   // the canopic jar's origin is its centre (bounds z -10..10)
 						MoveRefTo(remains, g->GetParentCell(), g->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, heading });
+						RE::DebugNotification("You dig up a burial urn.");
+					} else if (RaiseRemainsDraugr(remains, g)) {
+						RE::DebugNotification("You dig up their remains.");
 					} else {
-						remains->MoveTo(g);
+						remains->MoveTo(g);   // no draugr record: the old skeleton container
+						RE::DebugNotification("You dig up the remains.");
 					}
-					RE::DebugNotification(urn ? "You dig up a burial urn." : "You dig up the remains.");
 				}
 				PlayTurnUndeadSound();
 				g->Disable();

@@ -633,7 +633,8 @@ void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 	const bool wantA = s.layKeyboard.load() >= 0 || s.layGamepad.load() >= 0;
 	const bool wantB = RespectManager::CanResurrect(a_ref) &&
 		(s.resurrectKeyboard.load() >= 0 || s.resurrectGamepad.load() >= 0);
-	g_sink.BuildVisible(refID, wantA, wantB, s.resurrectEnabled.load(), s.collectEnabled.load());
+	g_sink.BuildVisible(refID, wantA, wantB,
+		s.resurrectEnabled.load() && !RespectManager::IsRaisedRemains(a_ref), s.collectEnabled.load());
 
 	if (!s.shiftGatesPrompts.load()) {
 		// Always-on behaviour: show the prompts whenever the crosshair is on a corpse.

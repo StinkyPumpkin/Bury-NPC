@@ -27,6 +27,9 @@ namespace RespectManager
 	// (ExtraAshPileRef). Never true for an actor, alive or dead.
 	bool IsAshPile(RE::TESObjectREFR* a_ref);
 
+	// A dead draugr this mod raised from a grave: never resurrected.
+	bool IsRaisedRemains(RE::TESObjectREFR* a_ref);
+
 	// Bring a dead actor back to life (RE::Actor::Resurrect).
 	void ExecuteResurrect(RE::FormID a_refID);
 
