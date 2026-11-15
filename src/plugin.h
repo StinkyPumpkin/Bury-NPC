@@ -3,5 +3,5 @@
 namespace Plugin
 {
 	inline constexpr auto NAME = "BuryTakeBodies";
-	inline constexpr auto VERSION = "1.4.2.0";
+	inline constexpr auto VERSION = "1.6.0.0";
 }

@@ -2,10 +2,12 @@
 #include "RespectManager.h"
 #include "Settings.h"
 #include "PromptManager.h"
+#include "PickupManager.h"
 
 #include <mutex>
 #include <thread>
 #include <chrono>
+#include <functional>
 #include <cctype>
 
 namespace
@@ -22,6 +24,15 @@ namespace
 	// Our menu-less isSmelter "dig" furniture (BuryTakeBodies.esp 0x835).
 	RE::TESFurniture*           g_animFurniture = nullptr;
 
+	// "Remains" container (BuryTakeBodies.esp 0x836): a buried unique NPC's
+	// inventory waits in one of these in the holding cell until it is dug up.
+	RE::TESObjectCONT*          g_remains = nullptr;
+
+	// Bumped on every new game / load. Work that waits (the dig animation, the
+	// bury-box check) holds FormIDs from the game it started in; a temporary ID
+	// can belong to a different object after a load, so it stops if this moved.
+	std::atomic<std::uint32_t>  g_generation{ 0 };
+
 	// ------------------------------------------------------------------
 	// Bury-in-progress state.  Bury pops a UIExtensions text-entry box; the
 	// typed message arrives via a SKSE mod event and the grave is placed when
@@ -33,6 +44,7 @@ namespace
 	std::string  g_buryDeadName;
 	std::string  g_buryMessage;
 	bool         g_buryConfirmed = false;
+	bool         g_buryBoxOpened = false;   // the text box actually appeared
 
 	// ------------------------------------------------------------------
 	// Move a reference to another cell (used to send the corpse to the
@@ -107,15 +119,80 @@ namespace
 	// contains "ash". --Claude 2026-09-18: the actor exclusion is the fix for
 	// living NPCs with "ash" in their name (Rashaal Taussa) getting the corpse
 	// prompts and being removed by Lay to Rest.
+	// The engine links an ash pile (an activator) to the actor it came from with
+	// ExtraAshPileRef - the same link QuickLoot follows to loot one. The old test
+	// matched "ash" in the base NAME, so an Ash Yam, Ashen Grass Pod or bottle of
+	// Ashfire Mead on the ground got the corpse prompts.
+	RE::Actor* AshPileActor(RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref || a_ref->As<RE::Actor>()) return nullptr;
+		auto* base = a_ref->GetBaseObject();
+		if (!base || !base->Is(RE::FormType::Activator)) return nullptr;
+		auto owner = a_ref->extraList.GetAshPileRef().get();
+		return owner ? owner->As<RE::Actor>() : nullptr;
+	}
+
 	bool IsAshPile(RE::TESObjectREFR* a_ref)
 	{
-		if (!a_ref || a_ref->As<RE::Actor>()) return false;
-		auto* base = a_ref->GetBaseObject();
-		if (!base) return false;
-		std::string name = base->GetName();
-		std::transform(name.begin(), name.end(), name.begin(),
-			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-		return !name.empty() && name.find("ash") != std::string::npos;
+		return AshPileActor(a_ref) != nullptr;
+	}
+
+	// The actor behind a corpse or an ash pile (holds the inventory and the name).
+	RE::Actor* CorpseActor(RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref) return nullptr;
+		if (auto* actor = a_ref->As<RE::Actor>()) return actor;
+		return AshPileActor(a_ref);
+	}
+
+	struct ItemMove
+	{
+		RE::TESBoundObject* obj;
+		RE::ExtraDataList*  xList;
+		std::int32_t        count;
+	};
+
+	std::vector<ItemMove> CollectItems(RE::TESObjectREFR* a_from, bool a_questOnly)
+	{
+		std::vector<ItemMove> moves;
+		if (!a_from) return moves;
+		auto inv = a_from->GetInventory();
+		for (auto& [obj, data] : inv) {
+			auto& [count, entry] = data;
+			if (!obj || count <= 0 || !entry) continue;
+			if (a_questOnly && !entry->IsQuestObject()) continue;
+			std::int32_t listed = 0;
+			if (entry->extraLists) {
+				for (auto* xList : *entry->extraLists) {
+					if (!xList || listed >= count) continue;
+					const std::int32_t n = (std::max)(1, xList->GetCount());
+					moves.push_back({ obj, xList, n });
+					listed += n;
+				}
+			}
+			if (count > listed) moves.push_back({ obj, nullptr, count - listed });
+		}
+		return moves;
+	}
+
+	void MoveItems(RE::TESObjectREFR* a_from, RE::TESObjectREFR* a_to, const std::vector<ItemMove>& a_moves)
+	{
+		for (const auto& m : a_moves) {
+			a_from->RemoveItem(m.obj, m.count, RE::ITEM_REMOVE_REASON::kStoreInContainer, m.xList, a_to);
+		}
+	}
+
+	// Lay to Rest and Bury send the corpse away; anything a quest needs comes to
+	// the player first so the quest can't get stuck.
+	void GiveQuestItemsToPlayer(RE::TESObjectREFR* a_corpse)
+	{
+		auto* actor = CorpseActor(a_corpse);
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!actor || !player) return;
+		auto moves = CollectItems(actor, true);
+		if (moves.empty()) return;
+		MoveItems(actor, player, moves);
+		RE::DebugNotification("You took the quest items they carried.");
 	}
 
 	bool IsValidCorpse(RE::TESObjectREFR* a_ref)
@@ -130,21 +207,43 @@ namespace
 	// Place the inscribed gravestone at the body and remove the body.  Runs on
 	// the main thread via the task queue.
 	// ------------------------------------------------------------------
+	// A buried unique NPC keeps their belongings: everything they carried goes into
+	// a "Remains" container parked in our holding cell, linked to the grave, and
+	// Dig Up brings it back. The NPC itself is removed as before.
+	bool StoreRemains(RE::TESObjectREFR* a_grave, RE::TESObjectREFR* a_body)
+	{
+		auto* actor = CorpseActor(a_body);
+		auto* npc = actor ? actor->GetActorBase() : nullptr;
+		auto* marker = PickupManager::GetHoldingMarker();
+		if (!a_grave || !npc || !npc->IsUnique() || !g_remains || !marker) return false;
+
+		RE::NiPointer<RE::TESObjectREFR> remains = marker->PlaceObjectAtMe(g_remains, true);
+		if (!remains) return false;
+		MoveItems(actor, remains.get(), CollectItems(actor, false));
+		const char* name = actor->GetDisplayFullName();
+		remains->SetDisplayName(RE::BSFixedString(std::string("Remains of ") + (name && *name ? name : "the fallen")), true);
+		PickupManager::RegisterBuriedBody(a_grave->GetFormID(), remains->GetFormID());
+		return true;
+	}
+
 	void PlaceGraveAndBury(RE::FormID a_bodyID, std::string a_engraving)
 	{
 		auto* body = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_bodyID);
 		if (!body) return;
 
+		bool stored = false;
 		if (g_graveActivator) {
 			RE::NiPointer<RE::TESObjectREFR> grave =
-				body->PlaceObjectAtMe(g_graveActivator, false);
+				body->PlaceObjectAtMe(g_graveActivator, true);   // persistent: a grave can hold remains
 			if (grave) {
 				StandGraveUpright(grave.get(), body);
 				grave->SetDisplayName(RE::BSFixedString(a_engraving), true);
+				stored = StoreRemains(grave.get(), body);
 			} else {
 				logger::warn("Bury: PlaceObjectAtMe returned null for {:08X}", a_bodyID);
 			}
 		}
+		if (!stored) GiveQuestItemsToPlayer(body);
 
 		PlayTurnUndeadSound();
 		body->SetActivationBlocked(false);
@@ -184,18 +283,18 @@ namespace
 	// stands, and the marker is cleaned up.  Falls back to an instant bury when
 	// the animation is off or the furniture is missing.
 	// ------------------------------------------------------------------
-	void DoBuryWithAnimation(RE::FormID a_bodyID, std::string a_engraving)
+	// Play the dig animation, then run a_finish on the main thread. Without the
+	// animation (setting off, furniture missing) a_finish runs at once.
+	void PlayDigThen(std::function<void()> a_finish)
 	{
 		auto& settings = PFR::Settings::GetSingleton();
 		auto* player = RE::PlayerCharacter::GetSingleton();
-		if (!settings.buryAnimation.load() || !g_animFurniture || !player) {
-			PlaceGraveAndBury(a_bodyID, a_engraving);
-			return;
+		RE::NiPointer<RE::TESObjectREFR> furn;
+		if (settings.buryAnimation.load() && g_animFurniture && player) {
+			furn = player->PlaceObjectAtMe(g_animFurniture, false);
 		}
-
-		RE::NiPointer<RE::TESObjectREFR> furn = player->PlaceObjectAtMe(g_animFurniture, false);
 		if (!furn) {
-			PlaceGraveAndBury(a_bodyID, a_engraving);
+			a_finish();
 			return;
 		}
 		const RE::FormID furnID = furn->GetFormID();
@@ -203,14 +302,16 @@ namespace
 
 		int ms = static_cast<int>(settings.buryAnimationDelay.load() * 1000.0f);
 		if (ms < 0) ms = 0;
+		const std::uint32_t gen = g_generation.load();
 
 		// Wait out the animation off the main thread, then finish on it.
-		std::thread([a_bodyID, a_engraving, furnID, ms]() {
+		std::thread([a_finish = std::move(a_finish), furnID, ms, gen]() {
 			std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 			auto* task = SKSE::GetTaskInterface();
 			if (!task) return;
-			task->AddTask([a_bodyID, a_engraving, furnID]() {
-				PlaceGraveAndBury(a_bodyID, a_engraving);
+			task->AddTask([a_finish, furnID, gen]() {
+				if (g_generation.load() != gen) return;   // a save was loaded meanwhile
+				a_finish();
 				if (auto* furnRef = RE::TESForm::LookupByID<RE::TESObjectREFR>(furnID)) {
 					if (auto* p = RE::PlayerCharacter::GetSingleton()) {
 						furnRef->ActivateRef(p, 0, nullptr, 1, false);  // stand up / exit
@@ -220,6 +321,11 @@ namespace
 				}
 			});
 		}).detach();
+	}
+
+	void DoBuryWithAnimation(RE::FormID a_bodyID, std::string a_engraving)
+	{
+		PlayDigThen([a_bodyID, a_engraving]() { PlaceGraveAndBury(a_bodyID, a_engraving); });
 	}
 
 	// ------------------------------------------------------------------
@@ -244,6 +350,7 @@ namespace
 			g_buryDeadName.clear();
 			g_buryMessage.clear();
 			g_buryConfirmed = false;
+			g_buryBoxOpened = false;
 		}
 
 		if (!confirmed) {
@@ -269,6 +376,39 @@ namespace
 		// v1.4.3 (user request): tell the player what the box is for — the NAME goes on
 		// automatically, the box is only the epitaph.
 		RE::DebugNotification("Write your epitaph — the name is engraved automatically.");
+
+		// If the box never appears (UIExtensions installed but its menu failed),
+		// the body would stay blocked from activation for good, and that block is
+		// saved. After a few seconds without the box, bury with the name only.
+		const std::uint32_t gen = g_generation.load();
+		std::thread([gen]() {
+			std::this_thread::sleep_for(std::chrono::seconds(4));
+			if (auto* task = SKSE::GetTaskInterface()) {
+				task->AddTask([gen]() {
+					if (g_generation.load() != gen) return;
+					RE::FormID bodyID = 0;
+					std::string deadName;
+					{
+						std::scoped_lock lk(g_buryMutex);
+						if (!g_burying || g_buryBoxOpened) return;
+						bodyID = g_buryBodyID;
+						deadName = g_buryDeadName;
+						g_burying = false;
+						g_buryBodyID = 0;
+						g_buryDeadName.clear();
+						g_buryMessage.clear();
+						g_buryConfirmed = false;
+					}
+					logger::warn("Bury: the epitaph box did not open; burying {:08X} with the name only", bodyID);
+					RE::DebugNotification("The epitaph box didn't open - buried with the name only.");
+					if (auto* body = RE::TESForm::LookupByID<RE::TESObjectREFR>(bodyID)) {
+						body->SetActivationBlocked(false);
+					}
+					DoBuryWithAnimation(bodyID, BuildEngraving(deadName, ""));
+				});
+			}
+		}).detach();
+
 		SKSE::GetTaskInterface()->AddUITask([]() {
 			auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
 			if (!vm) return;
@@ -387,6 +527,10 @@ namespace
 			RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
 		{
 			if (!a_event) return RE::BSEventNotifyControl::kContinue;
+			if (a_event->opening && a_event->menuName == "CustomMenu") {
+				std::scoped_lock lk(g_buryMutex);
+				if (g_burying) g_buryBoxOpened = true;
+			}
 			if (!a_event->opening && a_event->menuName == "CustomMenu") {
 				bool active;
 				{
@@ -418,13 +562,15 @@ namespace RespectManager
 			g_shovel2 = dh->LookupForm<RE::TESObjectMISC>(0x00F5D06, "Skyrim.esm");
 			// Our dig-animation furniture.
 			g_animFurniture = dh->LookupForm<RE::TESFurniture>(0x000835, "BuryTakeBodies.esp");
+			// Container for a buried unique NPC's belongings.
+			g_remains = dh->LookupForm<RE::TESObjectCONT>(0x000836, "BuryTakeBodies.esp");
 		}
 
 		BuryDialogSink::GetSingleton().Register();
 
-		logger::info("RespectManager: cleanupCell={} sound={} graveActivator={} UIExtensions={}",
+		logger::info("RespectManager: cleanupCell={} sound={} graveActivator={} remains={} UIExtensions={}",
 			g_cleanupCell != nullptr, g_soundForm != nullptr, g_graveActivator != nullptr,
-			g_hasUIExtensions);
+			g_remains != nullptr, g_hasUIExtensions);
 
 		if (!g_graveActivator) {
 			logger::warn("RespectManager: BuryTakeBodies.esp grave activator not found — "
@@ -489,7 +635,8 @@ namespace RespectManager
 			return;
 		}
 
-		// NO explosion (removed).  Sound + teleport away.
+		// NO explosion (removed).  Quest items to the player, sound, teleport away.
+		GiveQuestItemsToPlayer(ref);
 		PlayTurnUndeadSound();
 		MoveRefTo(ref, g_cleanupCell, RE::NiPoint3{ 0.0f, 0.0f, 0.0f }, ref->GetAngle());
 
@@ -518,12 +665,15 @@ namespace RespectManager
 		}
 
 		// Capture the deceased's name now (used as the first line of the grave).
+		// An ash pile is named after the actor it came from, not "Ash Pile".
+		RE::TESObjectREFR* named = CorpseActor(ref);
+		if (!named) named = ref;
 		std::string deadName;
 		if (settings.useDisplayName.load()) {
-			deadName = ref->GetDisplayFullName();
+			deadName = named->GetDisplayFullName();
 		}
 		if (deadName.empty()) {
-			if (auto* base = ref->GetBaseObject()) deadName = base->GetName();
+			if (auto* base = named->GetBaseObject()) deadName = base->GetName();
 		}
 
 		// Block re-activation while the box is up.
@@ -547,6 +697,13 @@ namespace RespectManager
 
 		{
 			std::scoped_lock lk(g_buryMutex);
+			// An earlier bury that never finished keeps its body blocked - let it go.
+			if (g_burying && g_buryBodyID != a_refID) {
+				if (auto* old = RE::TESForm::LookupByID<RE::TESObjectREFR>(g_buryBodyID)) {
+					old->SetActivationBlocked(false);
+				}
+			}
+			g_buryBoxOpened = false;
 			g_burying = true;
 			g_buryBodyID = a_refID;
 			g_buryDeadName = deadName;
@@ -563,10 +720,49 @@ namespace RespectManager
 		return a_ref->GetBaseObject() == g_graveActivator;
 	}
 
+	void OnGameReset()
+	{
+		g_generation.fetch_add(1);
+		std::scoped_lock lk(g_buryMutex);
+		g_burying = false;
+		g_buryBodyID = 0;
+		g_buryDeadName.clear();
+		g_buryMessage.clear();
+		g_buryConfirmed = false;
+		g_buryBoxOpened = false;
+	}
+
+	bool GraveHasRemains(RE::FormID a_graveID)
+	{
+		return PickupManager::HasBuriedBody(a_graveID);
+	}
+
 	void DestroyGrave(RE::FormID a_graveID)
 	{
 		auto* grave = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_graveID);
 		if (!grave || grave->GetBaseObject() != g_graveActivator) return;  // only our graves
+
+		// A unique NPC's grave: dig up their remains (a lootable container with
+		// everything they carried) instead of just removing the headstone.
+		if (PickupManager::HasBuriedBody(a_graveID)) {
+			if (PFR::Settings::GetSingleton().buryRequiresShovel.load() && !PlayerHasShovel()) {
+				RE::DebugNotification("You need a shovel to dig up the dead.");
+				return;
+			}
+			PlayDigThen([a_graveID]() {
+				auto* g = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_graveID);
+				if (!g) return;
+				const RE::FormID remainsID = PickupManager::TakeBuriedBody(a_graveID);
+				if (auto* remains = RE::TESForm::LookupByID<RE::TESObjectREFR>(remainsID)) {
+					remains->MoveTo(g);
+					RE::DebugNotification("You dig up the remains.");
+				}
+				PlayTurnUndeadSound();
+				g->Disable();
+				g->SetDelete(true);
+			});
+			return;
+		}
 
 		PlayTurnUndeadSound();
 		grave->Disable();

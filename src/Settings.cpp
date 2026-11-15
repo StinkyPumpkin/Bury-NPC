@@ -88,6 +88,8 @@ useDisplayName = true
 ; Destroy a grave you placed: look at it, HOLD the modifier (reveal), then HOLD
 ; the key to dig it out. Hidden until you hold the modifier so the epitaph
 ; stays clean. DX scancodes: LShift = 42, E = 18. Only affects this mod's graves.
+; A buried UNIQUE NPC's grave reads "Dig Up" instead: everything they carried was
+; kept, and digging brings up their remains to loot (needs a shovel like Bury).
 graveDestroyEnabled = true
 graveDestroyModifier = 42
 graveDestroyKey = 18
@@ -172,6 +174,13 @@ graveDestroyKey = 18
 			ini.GetBoolValue("General", "shiftGatesPrompts", shiftGatesPrompts.load()));
 		hideQuickLootWhileRevealing.store(
 			ini.GetBoolValue("General", "hideQuickLootWhileRevealing", hideQuickLootWhileRevealing.load()));
+
+		// debug = true has to raise the log level, or every logger::debug line is dropped.
+		if (auto log = spdlog::default_logger()) {
+			const auto level = debug.load() ? spdlog::level::debug : spdlog::level::info;
+			log->set_level(level);
+			log->flush_on(level);
+		}
 
 		logger::info(
 			"Settings: layKB={} buryKB={} collectKB={} collectEnabled={} "

@@ -23,8 +23,8 @@ namespace RespectManager
 	// True if the ref is a dead actor that can be brought back (excludes ash
 	// piles and non-actors).  Gates the Resurrect prompt.
 	bool CanResurrect(RE::TESObjectREFR* a_ref);
-	// A non-actor ref whose base name contains "ash" (turned-undead remains).
-	// Never true for an actor, alive or dead.
+	// An ash pile: an activator the engine links to the actor it came from
+	// (ExtraAshPileRef). Never true for an actor, alive or dead.
 	bool IsAshPile(RE::TESObjectREFR* a_ref);
 
 	// Bring a dead actor back to life (RE::Actor::Resurrect).
@@ -34,6 +34,11 @@ namespace RespectManager
 	// activator).  Used to show the Destroy Grave prompt only on our graves.
 	bool IsOurGrave(RE::TESObjectREFR* a_ref);
 
-	// Remove a gravestone this mod placed.
+	// Remove a gravestone this mod placed. A grave holding a unique NPC's
+	// remains is dug up instead: the remains come back at the grave.
 	void DestroyGrave(RE::FormID a_graveID);
+	// True when the grave holds a unique NPC's remains (the prompt then reads Dig Up).
+	bool GraveHasRemains(RE::FormID a_graveID);
+	// New game / load: drop work that still holds FormIDs from the old game.
+	void OnGameReset();
 }

@@ -53,6 +53,10 @@ namespace
 			PickupManager::Init();
 			PromptManager::Init();
 			break;
+		case SKSE::MessagingInterface::kPreLoadGame:
+		case SKSE::MessagingInterface::kNewGame:
+			RespectManager::OnGameReset();
+			break;
 		default:
 			break;
 		}

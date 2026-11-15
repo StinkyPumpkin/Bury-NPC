@@ -300,6 +300,8 @@ namespace
 		// screen / off the left edge).  With 0 it renders at the theme's fixed
 		// centre.  We track the target grave in g_currentGraveID, not refid.
 		g_graveSink.m_prompt.refid = 0;
+		// A grave holding a unique NPC's remains is dug up instead of destroyed.
+		g_graveSink.m_prompt.text = RespectManager::GraveHasRemains(graveID) ? "Dig Up" : "Destroy Grave";
 		(void)SkyPromptAPI::SendPrompt(&g_graveSink, g_clientID);
 		g_graveShowing.store(true);
 	}

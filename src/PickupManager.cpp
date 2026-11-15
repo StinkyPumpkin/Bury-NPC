@@ -31,6 +31,7 @@ namespace
 
 	constexpr std::uint32_t kCosaveID   = 'PFRC';
 	constexpr std::uint32_t kRecordType = 'CRPS';
+	constexpr std::uint32_t kGraveRecord = 'GRVS';   // grave -> buried unique body
 	constexpr std::uint32_t kVersion    = 1;
 
 	struct Slot
@@ -51,8 +52,12 @@ namespace
 	RE::BGSKeyword*     g_actorTypeNPC = nullptr;
 	std::recursive_mutex g_mutex;
 
+	// Graves that hold a buried unique NPC (grave ref -> body ref).
+	std::unordered_map<RE::FormID, RE::FormID> g_buried;
+
 	void ClearAllSlots()
 	{
+		g_buried.clear();
 		for (auto& s : g_slots) {
 			s.occupied = false;
 			s.bodyID = 0;
@@ -276,6 +281,14 @@ namespace
 			a_intfc->WriteRecordData(len);
 			if (len) a_intfc->WriteRecordData(s.name.data(), len);
 		}
+
+		if (!a_intfc->OpenRecord(kGraveRecord, kVersion)) return;
+		const auto graves = static_cast<std::uint32_t>(g_buried.size());
+		a_intfc->WriteRecordData(graves);
+		for (const auto& [grave, body] : g_buried) {
+			a_intfc->WriteRecordData(grave);
+			a_intfc->WriteRecordData(body);
+		}
 	}
 
 	void LoadCallback(SKSE::SerializationInterface* a_intfc)
@@ -285,6 +298,19 @@ namespace
 
 		std::uint32_t type = 0, version = 0, length = 0;
 		while (a_intfc->GetNextRecordInfo(type, version, length)) {
+			if (type == kGraveRecord) {
+				std::uint32_t graves = 0;
+				a_intfc->ReadRecordData(graves);
+				for (std::uint32_t i = 0; i < graves; ++i) {
+					RE::FormID graveOld = 0, bodyOld = 0, graveNew = 0, bodyNew = 0;
+					a_intfc->ReadRecordData(graveOld);
+					a_intfc->ReadRecordData(bodyOld);
+					if (a_intfc->ResolveFormID(graveOld, graveNew) && a_intfc->ResolveFormID(bodyOld, bodyNew)) {
+						g_buried[graveNew] = bodyNew;
+					}
+				}
+				continue;
+			}
 			if (type != kRecordType) continue;
 
 			std::uint32_t count = 0;
@@ -385,16 +411,31 @@ namespace PickupManager
 		}
 	}
 
-	bool CanCollect(RE::TESObjectREFR* a_ref)
+	RE::TESObjectREFR* GetHoldingMarker()
 	{
-		if (!a_ref) return false;
-		if (g_slots.empty() || !g_marker) return false;
-		auto* actor = a_ref->As<RE::Actor>();
-		if (!actor || !actor->IsDead()) return false;
-		// Humanoid only (ActorTypeNPC).  Dremora carry this keyword, so unlike
-		// the original mod they CAN be collected.
-		if (g_actorTypeNPC && !actor->HasKeyword(g_actorTypeNPC)) return false;
-		return true;
+		return g_marker;
+	}
+
+	void RegisterBuriedBody(RE::FormID a_graveID, RE::FormID a_bodyID)
+	{
+		std::scoped_lock lk(g_mutex);
+		g_buried[a_graveID] = a_bodyID;
+	}
+
+	bool HasBuriedBody(RE::FormID a_graveID)
+	{
+		std::scoped_lock lk(g_mutex);
+		return g_buried.contains(a_graveID);
+	}
+
+	RE::FormID TakeBuriedBody(RE::FormID a_graveID)
+	{
+		std::scoped_lock lk(g_mutex);
+		auto it = g_buried.find(a_graveID);
+		if (it == g_buried.end()) return 0;
+		const RE::FormID body = it->second;
+		g_buried.erase(it);
+		return body;
 	}
 
 	void ExecuteCollect(RE::FormID a_refID)
