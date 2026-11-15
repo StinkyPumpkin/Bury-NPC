@@ -200,6 +200,36 @@ namespace
 		return a_actor && !CollectItems(a_actor, true).empty();   // read only
 	}
 
+	// Two ash effects on one death leave two piles linked to the same actor; bury
+	// one and the other could be buried again (a second grave, an empty urn).
+	// Find the pile's twins in its cell so they leave with it. The cell is walked
+	// under its own lock (TES::ForEachReference walks without it and has crashed).
+	std::vector<RE::NiPointer<RE::TESObjectREFR>> FindTwinAshPiles(RE::TESObjectREFR* a_pile, RE::Actor* a_actor)
+	{
+		std::vector<RE::NiPointer<RE::TESObjectREFR>> twins;
+		auto* cell = a_pile ? a_pile->GetParentCell() : nullptr;
+		if (!cell || !a_actor || !cell->IsAttached()) return twins;
+		auto& rd = cell->GetRuntimeData();
+		RE::BSSpinLockGuard lock(rd.spinLock);
+		for (const auto& refPtr : rd.references) {
+			auto* ref = refPtr.get();
+			if (ref && ref != a_pile && AshPileActor(ref) == a_actor) twins.push_back(refPtr);
+		}
+		return twins;
+	}
+
+	void SendTwinsAway(const std::vector<RE::NiPointer<RE::TESObjectREFR>>& a_twins)
+	{
+		for (const auto& twin : a_twins) {
+			if (!twin) continue;
+			if (g_cleanupCell) {
+				MoveRefTo(twin.get(), g_cleanupCell, RE::NiPoint3{ 0.0f, 0.0f, 0.0f }, twin->GetAngle());
+			}
+			twin->Disable();
+			logger::info("Ash pile twin {:08X} sent away with its first pile", twin->GetFormID());
+		}
+	}
+
 	// Send the actor behind an ash pile away as well; it stays in the world,
 	// unseen, after the pile itself is moved.
 	void SendAshActorAway(RE::Actor* a_actor)
@@ -279,6 +309,7 @@ namespace
 		auto* marker = PickupManager::GetHoldingMarker();
 		auto* base = (a_ashes && g_remainsUrn) ? g_remainsUrn : g_remains;
 		if (!a_grave || !npc || !npc->IsUnique() || !base || !marker) return 0;
+		if (CollectItems(a_actor, false).empty()) return 0;   // nothing left to dig up: a plain grave
 
 		RE::NiPointer<RE::TESObjectREFR> remains = marker->PlaceObjectAtMe(base, true);
 		if (!remains) return 0;
@@ -349,6 +380,8 @@ namespace
 			}
 		}
 		const bool questItems = !remainsID && HasQuestItems(actor);
+		const auto twins = (actor && actor != body) ? FindTwinAshPiles(body, actor)
+		                                            : std::vector<RE::NiPointer<RE::TESObjectREFR>>{};
 
 		PlayTurnUndeadSound();
 		body->SetActivationBlocked(false);
@@ -356,6 +389,7 @@ namespace
 			MoveRefTo(body, g_cleanupCell, RE::NiPoint3{ 0.0f, 0.0f, 0.0f }, body->GetAngle());
 		}
 		body->Disable();
+		SendTwinsAway(twins);
 
 		// Items leave only a body that is no longer loaded (see MoveRemainsLater).
 		if (actor && (remainsID || questItems)) {
@@ -755,8 +789,11 @@ namespace RespectManager
 		// player once the body is gone (see GiveQuestItemsLater).
 		auto* actor = CorpseActor(ref);
 		const bool questItems = HasQuestItems(actor);
+		const auto twins = (actor && actor != ref) ? FindTwinAshPiles(ref, actor)
+		                                           : std::vector<RE::NiPointer<RE::TESObjectREFR>>{};
 		PlayTurnUndeadSound();
 		MoveRefTo(ref, g_cleanupCell, RE::NiPoint3{ 0.0f, 0.0f, 0.0f }, ref->GetAngle());
+		SendTwinsAway(twins);
 		if (questItems) {
 			if (actor != ref) SendAshActorAway(actor);
 			GiveQuestItemsLater(actor->GetFormID());
