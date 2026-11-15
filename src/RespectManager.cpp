@@ -220,40 +220,81 @@ namespace
 	// A buried unique NPC keeps their belongings: everything they carried goes into
 	// a "Remains" container parked in our holding cell, linked to the grave, and
 	// Dig Up brings it back. The NPC itself is removed as before.
-	bool StoreRemains(RE::TESObjectREFR* a_grave, RE::TESObjectREFR* a_body)
+	// Returns the container's FormID, or 0 when the body is not a unique NPC.
+	RE::FormID CreateRemains(RE::TESObjectREFR* a_grave, RE::Actor* a_actor)
 	{
-		auto* actor = CorpseActor(a_body);
-		auto* npc = actor ? actor->GetActorBase() : nullptr;
+		auto* npc = a_actor ? a_actor->GetActorBase() : nullptr;
 		auto* marker = PickupManager::GetHoldingMarker();
-		if (!a_grave || !npc || !npc->IsUnique() || !g_remains || !marker) return false;
+		if (!a_grave || !npc || !npc->IsUnique() || !g_remains || !marker) return 0;
 
 		RE::NiPointer<RE::TESObjectREFR> remains = marker->PlaceObjectAtMe(g_remains, true);
-		if (!remains) return false;
-		MoveItems(actor, remains.get(), CollectItems(actor, false));
-		const char* name = actor->GetDisplayFullName();
+		if (!remains) return 0;
+		const char* name = a_actor->GetDisplayFullName();
 		remains->SetDisplayName(RE::BSFixedString(std::string("Remains of ") + (name && *name ? name : "the fallen")), true);
 		PickupManager::RegisterBuriedBody(a_grave->GetFormID(), remains->GetFormID());
-		return true;
+		return remains->GetFormID();
+	}
+
+	// Fill the Remains once the body has left the loaded area. 1.6.0 took the worn
+	// gear off the corpse while it was still drawn and sent the body away in the
+	// same frame; every unique bury done that way hung the game moments later
+	// inside the memory allocator (a non-unique bury, which moves no items, was
+	// fine). Now the body goes first, and half a second later its items move per
+	// item type with no extra-data list, so the game picks the stacks itself the
+	// way Papyrus RemoveItem does.
+	void MoveRemainsLater(RE::FormID a_actorID, RE::FormID a_remainsID)
+	{
+		const std::uint32_t gen = g_generation.load();
+		std::thread([a_actorID, a_remainsID, gen]() {
+			std::this_thread::sleep_for(std::chrono::milliseconds(500));
+			auto* task = SKSE::GetTaskInterface();
+			if (!task) return;
+			task->AddTask([a_actorID, a_remainsID, gen]() {
+				if (g_generation.load() != gen) return;   // a save was loaded meanwhile
+				auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_actorID);
+				auto* remains = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_remainsID);
+				if (!actor || !remains) {
+					logger::warn("Remains: body {:08X} or container {:08X} is gone - nothing moved", a_actorID, a_remainsID);
+					return;
+				}
+				std::vector<std::pair<RE::TESBoundObject*, std::int32_t>> stacks;
+				for (const auto& m : CollectItems(actor, false)) {
+					auto it = std::find_if(stacks.begin(), stacks.end(),
+						[&](const auto& s) { return s.first == m.obj; });
+					if (it == stacks.end()) {
+						stacks.emplace_back(m.obj, m.count);
+					} else {
+						it->second += m.count;
+					}
+				}
+				for (const auto& [obj, count] : stacks) {
+					actor->RemoveItem(obj, count, RE::ITEM_REMOVE_REASON::kStoreInContainer, nullptr, remains);
+				}
+				logger::info("Remains: moved {} item types from {:08X} into {:08X}", stacks.size(), a_actorID, a_remainsID);
+			});
+		}).detach();
 	}
 
 	void PlaceGraveAndBury(RE::FormID a_bodyID, std::string a_engraving)
 	{
 		auto* body = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_bodyID);
 		if (!body) return;
+		auto* actor = CorpseActor(body);
 
-		bool stored = false;
+		RE::FormID remainsID = 0;
 		if (g_graveActivator) {
 			RE::NiPointer<RE::TESObjectREFR> grave =
 				body->PlaceObjectAtMe(g_graveActivator, true);   // persistent: a grave can hold remains
 			if (grave) {
 				StandGraveUpright(grave.get(), body);
 				grave->SetDisplayName(RE::BSFixedString(a_engraving), true);
-				stored = StoreRemains(grave.get(), body);
+				remainsID = CreateRemains(grave.get(), actor);
+				logger::info("Bury: grave {:08X} for {:08X}, remains {:08X}", grave->GetFormID(), a_bodyID, remainsID);
 			} else {
 				logger::warn("Bury: PlaceObjectAtMe returned null for {:08X}", a_bodyID);
 			}
 		}
-		if (!stored) GiveQuestItemsToPlayer(body);
+		if (!remainsID) GiveQuestItemsToPlayer(body);
 
 		PlayTurnUndeadSound();
 		body->SetActivationBlocked(false);
@@ -261,6 +302,18 @@ namespace
 			MoveRefTo(body, g_cleanupCell, RE::NiPoint3{ 0.0f, 0.0f, 0.0f }, body->GetAngle());
 		}
 		body->Disable();
+
+		if (remainsID && actor) {
+			// An ash pile's actor stays in the world, unseen; send it away too, so its
+			// belongings also leave a body that is no longer loaded.
+			if (actor != body) {
+				if (g_cleanupCell) {
+					MoveRefTo(actor, g_cleanupCell, RE::NiPoint3{ 0.0f, 0.0f, 0.0f }, actor->GetAngle());
+				}
+				actor->Disable();
+			}
+			MoveRemainsLater(actor->GetFormID(), remainsID);
+		}
 
 		if (PFR::Settings::GetSingleton().debug.load()) {
 			logger::debug("Bury: buried {:08X} — '{}'", a_bodyID, a_engraving);
