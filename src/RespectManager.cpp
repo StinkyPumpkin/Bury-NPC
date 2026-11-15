@@ -160,7 +160,14 @@ namespace
 		for (auto& [obj, data] : inv) {
 			auto& [count, entry] = data;
 			if (!obj || count <= 0 || !entry) continue;
-			if (a_questOnly && !entry->IsQuestObject()) continue;
+			const bool quest = entry->IsQuestObject();
+			if (a_questOnly && !quest) continue;
+			// Other mods tag bodies with worthless marker items (RSE's "Bandit On
+			// Player Token", ShoulderCarryState's "dead-still"): a MiscObject worth
+			// 0 gold that weighs nothing. Leave those behind with the body.
+			if (!quest) {
+				if (auto* misc = obj->As<RE::TESObjectMISC>(); misc && misc->value == 0 && misc->weight == 0.0f) continue;
+			}
 			std::int32_t listed = 0;
 			if (entry->extraLists) {
 				for (auto* xList : *entry->extraLists) {

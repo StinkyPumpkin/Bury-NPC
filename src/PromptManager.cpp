@@ -418,6 +418,15 @@ namespace
 			if (!a_event) return RE::BSEventNotifyControl::kContinue;
 
 			auto ref = a_event->crosshairRef;
+			// A corpse with activation blocked belongs to someone else right now:
+			// RSE - Shoulder Or Saddle blocks the body you carry on your shoulder,
+			// quest scenes block theirs, and Bury blocks its own while the epitaph
+			// box is up. No prompts on those, so nothing pulls a body out from
+			// under another mod.
+			if (ref && ref->IsActivationBlocked()) {
+				PromptManager::Hide();
+				return RE::BSEventNotifyControl::kContinue;
+			}
 			if (ref) {
 				auto* actor = ref->As<RE::Actor>();
 				if (actor && actor->IsDead()) {
