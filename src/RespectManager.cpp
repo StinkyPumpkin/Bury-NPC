@@ -280,6 +280,57 @@ namespace
 	}
 
 	// ------------------------------------------------------------------
+	// A one-line tip above the text box ("Here lies <Name> — write an
+	// epitaph:"). The UIExtensions box has no label of its own, so we add a
+	// TextField to its _root.textEntry clip once the SWF reports it loaded.
+	// Scaleform work, so this runs as a UI task.
+	// ------------------------------------------------------------------
+	void AddEpitaphTip(const std::string& a_deadName)
+	{
+		auto* ui = RE::UI::GetSingleton();
+		auto menu = ui ? ui->GetMenu("CustomMenu") : nullptr;
+		auto* movie = menu ? menu->uiMovie.get() : nullptr;
+		if (!movie) return;
+
+		RE::GFxValue entry;
+		if (!movie->GetVariable(&entry, "_root.textEntry") || !entry.IsDisplayObject()) return;
+
+		RE::GFxValue bounds;
+		const RE::GFxValue boundsArg[1]{ entry };
+		if (!entry.Invoke("getBounds", &bounds, boundsArg, 1) || !bounds.IsObject()) return;
+		RE::GFxValue xMin, xMax, yMin;
+		bounds.GetMember("xMin", &xMin);
+		bounds.GetMember("xMax", &xMax);
+		bounds.GetMember("yMin", &yMin);
+		if (!xMin.IsNumber() || !xMax.IsNumber() || !yMin.IsNumber()) return;
+
+		const double width = xMax.GetNumber() - xMin.GetNumber();
+		const RE::GFxValue tfArgs[6]{ "pfrEpitaphTip", 1000.0, xMin.GetNumber(),
+			yMin.GetNumber() - 40.0, width, 34.0 };
+		RE::GFxValue tip;
+		entry.Invoke("createTextField", &tip, tfArgs, 6);
+		if (!tip.IsDisplayObject() && !tip.IsObject()) {
+			entry.GetMember("pfrEpitaphTip", &tip);
+		}
+		if (!tip.IsObject() && !tip.IsDisplayObject()) return;
+
+		RE::GFxValue fmt;
+		movie->CreateObject(&fmt, "TextFormat");
+		fmt.SetMember("font", "$EverywhereMediumFont");
+		fmt.SetMember("size", 22.0);
+		fmt.SetMember("color", 16777215.0);
+		fmt.SetMember("align", "center");
+		const RE::GFxValue fmtArg[1]{ fmt };
+		tip.SetMember("embedFonts", true);
+		tip.SetMember("selectable", false);
+		tip.Invoke("setNewTextFormat", nullptr, fmtArg, 1);
+
+		const std::string text = "Here lies " + (a_deadName.empty() ? std::string("the fallen") : a_deadName) +
+			" — write an epitaph:";
+		tip.SetMember("text", text.c_str());
+	}
+
+	// ------------------------------------------------------------------
 	// Listens for the text box's result (SKSE mod event) and its close
 	// (menu event) to finalize the bury.
 	// ------------------------------------------------------------------
@@ -310,7 +361,18 @@ namespace
 			RE::BSTEventSource<SKSE::ModCallbackEvent>*) override
 		{
 			if (!a_event) return RE::BSEventNotifyControl::kContinue;
-			if (a_event->eventName == "UITextEntryMenu_TextChanged") {
+			if (a_event->eventName == "UITextEntryMenu_LoadMenu") {
+				std::string deadName;
+				bool active;
+				{
+					std::scoped_lock lk(g_buryMutex);
+					active = g_burying;
+					deadName = g_buryDeadName;
+				}
+				if (active) {
+					SKSE::GetTaskInterface()->AddUITask([deadName]() { AddEpitaphTip(deadName); });
+				}
+			} else if (a_event->eventName == "UITextEntryMenu_TextChanged") {
 				std::scoped_lock lk(g_buryMutex);
 				if (g_burying) {
 					g_buryMessage = a_event->strArg.c_str();
