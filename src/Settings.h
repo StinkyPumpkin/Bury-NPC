@@ -22,6 +22,9 @@ namespace PFR
 		std::atomic<int32_t> collectKeyboard{ 20 };
 		std::atomic<int32_t> collectGamepad{ -1 };
 		std::atomic<bool>    collectEnabled{ true };
+		// true = a carried body doesn't count against a follower's carry limit in the
+		// trade menu, so it can be handed over ("<Name> can't carry any more" otherwise).
+		std::atomic<bool>    followersCarryBodies{ true };
 
 		// Resurrect/Take pair key (tap = Resurrect, hold = Take Body).  E = 0x12 (18).
 		std::atomic<int32_t> resurrectKeyboard{ 18 };

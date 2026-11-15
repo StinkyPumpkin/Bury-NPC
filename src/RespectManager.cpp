@@ -38,13 +38,50 @@ namespace
 	// Move a reference to another cell (used to send the corpse to the
 	// vanilla WIDeadBodyCleanupCell so it disappears).
 	// ------------------------------------------------------------------
-	void MoveRefTo(RE::TESObjectREFR* a_ref, RE::TESObjectCELL* a_targetCell,
+	void MoveRefTo(RE::TESObjectREFR* a_ref, RE::TESObjectCELL* a_targetCell, RE::TESWorldSpace* a_worldspace,
 		const RE::NiPoint3& a_position, const RE::NiPoint3& a_rotation)
 	{
 		using func_t = void (*)(RE::TESObjectREFR*, const RE::ObjectRefHandle&,
 			RE::TESObjectCELL*, RE::TESWorldSpace*, const RE::NiPoint3&, const RE::NiPoint3&);
 		static REL::Relocation<func_t> func{ RELOCATION_ID(56227, 56626) };
-		func(a_ref, RE::ObjectRefHandle{}, a_targetCell, nullptr, a_position, a_rotation);
+		func(a_ref, RE::ObjectRefHandle{}, a_targetCell, a_worldspace, a_position, a_rotation);
+	}
+
+	void MoveRefTo(RE::TESObjectREFR* a_ref, RE::TESObjectCELL* a_targetCell,
+		const RE::NiPoint3& a_position, const RE::NiPoint3& a_rotation)
+	{
+		MoveRefTo(a_ref, a_targetCell, nullptr, a_position, a_rotation);
+	}
+
+	// Stand a freshly placed grave upright on the ground. PlaceObjectAtMe copied the
+	// corpse's rotation, and a ragdoll's X/Y rotation can be anything, so on rough
+	// ground the headstone came out tilted or upside down. Keep only a heading
+	// (turned toward the player) and, outdoors, sit it on the terrain under the body.
+	void StandGraveUpright(RE::TESObjectREFR* a_grave, RE::TESObjectREFR* a_body)
+	{
+		if (!a_grave || !a_body) return;
+
+		RE::NiPoint3 pos = a_body->GetPosition();
+		float heading = a_body->GetAngleZ();
+		if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+			const RE::NiPoint3 toPlayer = player->GetPosition() - pos;
+			if (toPlayer.x != 0.0f || toPlayer.y != 0.0f) {
+				heading = std::atan2(toPlayer.x, toPlayer.y);
+			}
+		}
+
+		// Terrain height only in exteriors; skip it when the body lies well above or
+		// below the terrain (a rock, a bridge, a cave mouth) so the grave isn't sunk.
+		if (auto* cell = a_body->GetParentCell(); cell && !cell->IsInteriorCell()) {
+			float land = 0.0f;
+			if (auto* tes = RE::TES::GetSingleton(); tes && tes->GetLandHeight(pos, land) &&
+				std::abs(land - pos.z) < 80.0f) {
+				pos.z = land;
+			}
+		}
+
+		MoveRefTo(a_grave, a_grave->GetParentCell(), a_grave->GetWorldspace(),
+			pos, RE::NiPoint3{ 0.0f, 0.0f, heading });
 	}
 
 	void PlayTurnUndeadSound()
@@ -102,6 +139,7 @@ namespace
 			RE::NiPointer<RE::TESObjectREFR> grave =
 				body->PlaceObjectAtMe(g_graveActivator, false);
 			if (grave) {
+				StandGraveUpright(grave.get(), body);
 				grave->SetDisplayName(RE::BSFixedString(a_engraving), true);
 			} else {
 				logger::warn("Bury: PlaceObjectAtMe returned null for {:08X}", a_bodyID);

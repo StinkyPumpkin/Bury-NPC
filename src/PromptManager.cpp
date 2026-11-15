@@ -3,7 +3,8 @@
 #include "Settings.h"
 #include "RespectManager.h"
 #include "PickupManager.h"
-#include "QuickLootAPI.h"   // QuickLoot IE 3.x request API (SKSE messaging), header-only
+#include "QuickLootAPI.h"      // QuickLoot IE 3.x request API (SKSE messaging), header-only
+#include "QuickLootAPI_v4.h"   // QuickLoot IE 4.x exported-interface API (MIT), header-only
 
 namespace
 {
@@ -42,16 +43,29 @@ namespace
 	// a corpse. DisableLootMenu hides the loot list at once; EnableLootMenu makes
 	// QuickLoot re-evaluate the crosshair and re-open on the same corpse.
 	std::atomic<bool>         g_quickLootReady{ false };
+	std::atomic<bool>         g_quickLootV4{ false };   // 4.x dropped the 3.x messaging API
 	std::atomic<bool>         g_lootSuppressed{ false };
+
+	void QuickLootDisable()
+	{
+		if (g_quickLootV4.load()) QuickLoot::API::QuickLootAPI::DisableLootMenu();
+		else QuickLoot::QuickLootAPI::DisableLootMenu();
+	}
+
+	void QuickLootEnable()
+	{
+		if (g_quickLootV4.load()) QuickLoot::API::QuickLootAPI::EnableLootMenu();
+		else QuickLoot::QuickLootAPI::EnableLootMenu();
+	}
 
 	void SuppressQuickLoot(bool a_on)
 	{
 		if (!g_quickLootReady.load()) return;
 		if (!PFR::Settings::GetSingleton().hideQuickLootWhileRevealing.load()) return;
 		if (a_on) {
-			if (!g_lootSuppressed.exchange(true)) QuickLoot::QuickLootAPI::DisableLootMenu();
+			if (!g_lootSuppressed.exchange(true)) QuickLootDisable();
 		} else {
-			if (g_lootSuppressed.exchange(false)) QuickLoot::QuickLootAPI::EnableLootMenu();
+			if (g_lootSuppressed.exchange(false)) QuickLootEnable();
 		}
 	}
 
@@ -450,10 +464,17 @@ void PromptManager::Init()
 
 	// QuickLoot IE 3.x request API: connect now (kDataLoaded = every plugin is loaded).
 	// Soft dependency — without QuickLoot IE the client just reports not-ready.
-	QuickLoot::QuickLootAPI::Init();
-	g_quickLootReady.store(QuickLoot::QuickLootAPI::IsReady());
+	// QuickLoot IE 4.x exports GetQuickLootInterfaceV20; 3.x only answers the messaging
+	// request API. Try 4.x first so a QuickLoot update doesn't silently drop the hide.
+	if (QuickLoot::API::QuickLootAPI::Init(Plugin::NAME, QuickLoot::API::ApiVersion::kV20)) {
+		g_quickLootV4.store(true);
+		g_quickLootReady.store(true);
+	} else {
+		QuickLoot::QuickLootAPI::Init();
+		g_quickLootReady.store(QuickLoot::QuickLootAPI::IsReady());
+	}
 	logger::info("PromptManager: QuickLoot IE API {} (hideQuickLootWhileRevealing={})",
-		g_quickLootReady.load() ? "connected" : "not available",
+		g_quickLootReady.load() ? (g_quickLootV4.load() ? "connected (4.x interface)" : "connected (3.x requests)") : "not available",
 		PFR::Settings::GetSingleton().hideQuickLootWhileRevealing.load());
 	logger::info("PromptManager: init clientID={} (PairA/Lay-Bury=kb{} PairB/Res-Take=kb{}) shiftGated={}",
 		g_clientID,

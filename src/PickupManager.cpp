@@ -200,6 +200,60 @@ namespace
 	};
 
 	// ------------------------------------------------------------------
+	// Handing a body to a follower. The trade menu refuses any item that would
+	// put a teammate over their carry limit (sTeammateOverencumbered, "<Name>
+	// can't carry any more"), and a body weighs 100-130 plus its gear, so most
+	// followers refused it. While the trade menu with a teammate is open every
+	// carried body weighs 0, so it can be given and doesn't block other gifts;
+	// the real weight comes back when the menu closes. The weight lives on the
+	// token's base form, which is never saved (the cosave keeps the real one).
+	// ------------------------------------------------------------------
+	std::atomic<bool> g_weightsLifted{ false };
+
+	void SetCarriedWeights(bool a_lift)
+	{
+		std::scoped_lock lk(g_mutex);
+		for (auto& s : g_slots) {
+			if (s.occupied && s.misc) s.misc->weight = a_lift ? 0.0f : s.weight;
+		}
+	}
+
+	bool TradingWithTeammate()
+	{
+		auto ref = RE::ContainerMenu::GetTargetRefHandle();
+		auto target = RE::TESObjectREFR::LookupByHandle(ref);
+		auto* actor = target ? target->As<RE::Actor>() : nullptr;
+		return actor && !actor->IsDead() && actor->IsPlayerTeammate();
+	}
+
+	class TradeMenuSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
+	{
+	public:
+		static TradeMenuSink& GetSingleton()
+		{
+			static TradeMenuSink instance;
+			return instance;
+		}
+
+		RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event,
+			RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
+		{
+			if (!a_event || a_event->menuName != RE::ContainerMenu::MENU_NAME) {
+				return RE::BSEventNotifyControl::kContinue;
+			}
+			if (a_event->opening) {
+				if (PFR::Settings::GetSingleton().followersCarryBodies.load() && TradingWithTeammate()) {
+					SetCarriedWeights(true);
+					g_weightsLifted.store(true);
+				}
+			} else if (g_weightsLifted.exchange(false)) {
+				SetCarriedWeights(false);
+			}
+			return RE::BSEventNotifyControl::kContinue;
+		}
+	};
+
+	// ------------------------------------------------------------------
 	// Cosave callbacks.
 	// ------------------------------------------------------------------
 	void SaveCallback(SKSE::SerializationInterface* a_intfc)
@@ -318,6 +372,9 @@ namespace PickupManager
 
 		if (auto* holder = RE::ScriptEventSourceHolder::GetSingleton()) {
 			holder->AddEventSink<RE::TESContainerChangedEvent>(&DropSink::GetSingleton());
+		}
+		if (auto* ui = RE::UI::GetSingleton()) {
+			ui->AddEventSink<RE::MenuOpenCloseEvent>(&TradeMenuSink::GetSingleton());
 		}
 
 		logger::info("Pickup: {} corpse slots, marker={}, ActorTypeNPC={}",

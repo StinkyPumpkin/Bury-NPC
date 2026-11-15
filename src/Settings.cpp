@@ -67,6 +67,10 @@ collectGamepad = -1
 ; false = holding the resurrect key no longer takes the body. With Resurrect
 ; also off, that key's prompt is hidden entirely.
 collectEnabled = true
+; true = you can hand a carried body to a follower: bodies don't count against the
+; follower's carry limit while you trade with them. false = the game's normal limit
+; applies, and most followers refuse a body ("can't carry any more").
+followersCarryBodies = true
 
 [Resurrect]
 ; false = tapping the resurrect key no longer resurrects; the prompt then reads
@@ -136,6 +140,8 @@ graveDestroyKey = 18
 
 		collectEnabled.store(
 			ini.GetBoolValue("Collect", "collectEnabled", collectEnabled.load()));
+		followersCarryBodies.store(
+			ini.GetBoolValue("Collect", "followersCarryBodies", followersCarryBodies.load()));
 
 		resurrectKeyboard.store(static_cast<int32_t>(
 			ini.GetLongValue("Hotkeys", "resurrectKeyboard", resurrectKeyboard.load())));
