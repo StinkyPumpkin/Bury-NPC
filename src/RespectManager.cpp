@@ -27,8 +27,8 @@ namespace
 	// "Remains" container (BuryTakeBodies.esp 0x836): a buried unique NPC's
 	// inventory waits in one of these in the holding cell until it is dug up.
 	RE::TESObjectCONT*          g_remains = nullptr;
-	// "Burial Urn" container (0x837, vanilla SBurialUrn01 model): used instead
-	// when the NPC was buried as an ash pile.
+	// "Burial Urn" container (0x837, the vanilla Nordic canopic jar model):
+	// used instead when the NPC was buried as an ash pile.
 	RE::TESObjectCONT*          g_remainsUrn = nullptr;
 
 	// Bumped on every new game / load. Work that waits (the dig animation, the
@@ -935,6 +935,7 @@ namespace RespectManager
 								pos.z = land;
 							}
 						}
+						pos.z += 10.0f;   // the canopic jar's origin is its centre (bounds z -10..10)
 						MoveRefTo(remains, g->GetParentCell(), g->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, heading });
 					} else {
 						remains->MoveTo(g);
