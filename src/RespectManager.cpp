@@ -165,8 +165,11 @@ namespace
 			// Other mods tag bodies with worthless marker items (RSE's "Bandit On
 			// Player Token", ShoulderCarryState's "dead-still"): a MiscObject worth
 			// 0 gold that weighs nothing. Leave those behind with the body.
-			if (!quest) {
-				if (auto* misc = obj->As<RE::TESObjectMISC>(); misc && misc->value == 0 && misc->weight == 0.0f) continue;
+			// Checked by form type: keys are TESObjectMISC too in CommonLib (TESKey
+			// derives from it) and most keys are worth 0 and weigh 0.
+			if (!quest && obj->Is(RE::FormType::Misc)) {
+				auto* misc = static_cast<RE::TESObjectMISC*>(obj);
+				if (misc->value == 0 && misc->weight == 0.0f) continue;
 			}
 			std::int32_t listed = 0;
 			if (entry->extraLists) {
