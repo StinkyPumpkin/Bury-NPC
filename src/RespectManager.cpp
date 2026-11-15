@@ -30,6 +30,8 @@ namespace
 	// "Burial Urn" container (0x837, the vanilla Nordic canopic jar model):
 	// used instead when the NPC was buried as an ash pile.
 	RE::TESObjectCONT*          g_remainsUrn = nullptr;
+	// "Ashes" jar item (0x838, same canopic jar model): what an emptied urn becomes.
+	RE::TESObjectMISC*          g_ashesJar = nullptr;
 
 	// Bumped on every new game / load. Work that waits (the dig animation, the
 	// bury-box check) holds FormIDs from the game it started in; a temporary ID
@@ -302,14 +304,25 @@ namespace
 	// a "Remains" container parked in our holding cell, linked to the grave, and
 	// Dig Up brings it back. The NPC itself is removed as before.
 	// Someone buried as an ash pile comes back up as a burial urn of their ashes.
+	RE::TESObjectCONT* RemainsBase(bool a_ashes)
+	{
+		return (a_ashes && g_remainsUrn) ? g_remainsUrn : g_remains;
+	}
+
+	// A unique NPC who still carries something: their grave will hold Remains.
+	bool WillKeepRemains(RE::Actor* a_actor, bool a_ashes)
+	{
+		auto* npc = a_actor ? a_actor->GetActorBase() : nullptr;
+		return npc && npc->IsUnique() && RemainsBase(a_ashes) && PickupManager::GetHoldingMarker() &&
+		       !CollectItems(a_actor, false).empty();
+	}
+
 	// Returns the container's FormID, or 0 when the body is not a unique NPC.
 	RE::FormID CreateRemains(RE::TESObjectREFR* a_grave, RE::Actor* a_actor, bool a_ashes)
 	{
-		auto* npc = a_actor ? a_actor->GetActorBase() : nullptr;
 		auto* marker = PickupManager::GetHoldingMarker();
-		auto* base = (a_ashes && g_remainsUrn) ? g_remainsUrn : g_remains;
-		if (!a_grave || !npc || !npc->IsUnique() || !base || !marker) return 0;
-		if (CollectItems(a_actor, false).empty()) return 0;   // nothing left to dig up: a plain grave
+		auto* base = RemainsBase(a_ashes);
+		if (!a_grave || !WillKeepRemains(a_actor, a_ashes)) return 0;
 
 		RE::NiPointer<RE::TESObjectREFR> remains = marker->PlaceObjectAtMe(base, true);
 		if (!remains) return 0;
@@ -368,12 +381,15 @@ namespace
 
 		RE::FormID remainsID = 0;
 		if (g_graveActivator) {
+			// Graves are permanent: they stay where they were dug (a grave holding
+			// Remains is also the only link to them). Each costs a small entry in the save.
+			const bool ashes = actor && actor != body;
 			RE::NiPointer<RE::TESObjectREFR> grave =
-				body->PlaceObjectAtMe(g_graveActivator, true);   // persistent: a grave can hold remains
+				body->PlaceObjectAtMe(g_graveActivator, true);
 			if (grave) {
 				StandGraveUpright(grave.get(), body);
 				grave->SetDisplayName(RE::BSFixedString(a_engraving), true);
-				remainsID = CreateRemains(grave.get(), actor, actor && actor != body);
+				remainsID = CreateRemains(grave.get(), actor, ashes);
 				logger::info("Bury: grave {:08X} for {:08X}, remains {:08X}", grave->GetFormID(), a_bodyID, remainsID);
 			} else {
 				logger::warn("Bury: PlaceObjectAtMe returned null for {:08X}", a_bodyID);
@@ -693,25 +709,36 @@ namespace
 	};
 
 	// ------------------------------------------------------------------
-	// A dug-up burial urn goes away once it has been emptied: when the
-	// container menu on it closes, or after a take that opens no menu
-	// (QuickLoot). The skeleton Remains stay as they are.
+	// Once a dug-up burial urn has been emptied it becomes a jar of the dead's
+	// ashes: a carryable item named like the urn ("Ashes of <Name>") in its
+	// place, to take home and set on a shelf. Checked when the container menu
+	// on the urn closes, or after a take that opens no menu (QuickLoot). The
+	// skeleton Remains stay as they are.
 	// ------------------------------------------------------------------
 	bool IsUrn(RE::TESObjectREFR* a_ref)
 	{
 		return a_ref && g_remainsUrn && a_ref->GetBaseObject() == g_remainsUrn;
 	}
 
-	void RemoveUrnIfEmpty(RE::FormID a_urnID)
+	void TurnEmptyUrnIntoJar(RE::FormID a_urnID)
 	{
 		auto* urn = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_urnID);
 		if (!IsUrn(urn) || urn->IsDisabled()) return;
 		for (const auto& [obj, count] : urn->GetInventoryCounts()) {
 			if (count > 0) return;
 		}
+		RE::FormID jarID = 0;
+		if (g_ashesJar) {
+			// Permanent while it stands at the grave; once picked up it is an ordinary item.
+			if (RE::NiPointer<RE::TESObjectREFR> jar = urn->PlaceObjectAtMe(g_ashesJar, true)) {
+				const char* name = urn->GetDisplayFullName();
+				jar->SetDisplayName(RE::BSFixedString(name && *name ? name : "Ashes"), true);
+				jarID = jar->GetFormID();
+			}
+		}
 		urn->Disable();
 		urn->SetDelete(true);
-		logger::info("Urn {:08X} is empty - removed", a_urnID);
+		logger::info("Urn {:08X} emptied - replaced by ashes jar {:08X}", a_urnID, jarID);
 	}
 
 	class UrnSink :
@@ -770,7 +797,7 @@ namespace
 		static void QueueCheck(RE::FormID a_id)
 		{
 			if (auto* task = SKSE::GetTaskInterface()) {
-				task->AddTask([a_id]() { RemoveUrnIfEmpty(a_id); });
+				task->AddTask([a_id]() { TurnEmptyUrnIntoJar(a_id); });
 			}
 		}
 
@@ -799,14 +826,15 @@ namespace RespectManager
 			// Container for a buried unique NPC's belongings.
 			g_remains = dh->LookupForm<RE::TESObjectCONT>(0x000836, "BuryTakeBodies.esp");
 			g_remainsUrn = dh->LookupForm<RE::TESObjectCONT>(0x000837, "BuryTakeBodies.esp");
+			g_ashesJar = dh->LookupForm<RE::TESObjectMISC>(0x000838, "BuryTakeBodies.esp");
 		}
 
 		BuryDialogSink::GetSingleton().Register();
 		UrnSink::GetSingleton().Register();
 
-		logger::info("RespectManager: cleanupCell={} sound={} graveActivator={} remains={} urn={} UIExtensions={}",
+		logger::info("RespectManager: cleanupCell={} sound={} graveActivator={} remains={} urn={} jar={} UIExtensions={}",
 			g_cleanupCell != nullptr, g_soundForm != nullptr, g_graveActivator != nullptr,
-			g_remains != nullptr, g_remainsUrn != nullptr, g_hasUIExtensions);
+			g_remains != nullptr, g_remainsUrn != nullptr, g_ashesJar != nullptr, g_hasUIExtensions);
 
 		if (!g_graveActivator) {
 			logger::warn("RespectManager: BuryTakeBodies.esp grave activator not found — "
