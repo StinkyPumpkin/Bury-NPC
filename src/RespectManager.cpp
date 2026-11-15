@@ -188,24 +188,72 @@ namespace
 		return moves;
 	}
 
-	void MoveItems(RE::TESObjectREFR* a_from, RE::TESObjectREFR* a_to, const std::vector<ItemMove>& a_moves)
+	std::int32_t CountOf(RE::TESObjectREFR* a_ref, RE::TESBoundObject* a_obj)
 	{
-		for (const auto& m : a_moves) {
-			a_from->RemoveItem(m.obj, m.count, RE::ITEM_REMOVE_REASON::kStoreInContainer, m.xList, a_to);
+		auto counts = a_ref->GetInventoryCounts([a_obj](RE::TESBoundObject& a_o) { return &a_o == a_obj; });
+		const auto it = counts.find(a_obj);
+		return it != counts.end() ? it->second : 0;
+	}
+
+	bool HasQuestItems(RE::Actor* a_actor)
+	{
+		return a_actor && !CollectItems(a_actor, true).empty();   // read only
+	}
+
+	// Send the actor behind an ash pile away as well; it stays in the world,
+	// unseen, after the pile itself is moved.
+	void SendAshActorAway(RE::Actor* a_actor)
+	{
+		if (!a_actor) return;
+		if (g_cleanupCell) {
+			MoveRefTo(a_actor, g_cleanupCell, RE::NiPoint3{ 0.0f, 0.0f, 0.0f }, a_actor->GetAngle());
 		}
+		a_actor->Disable();
 	}
 
 	// Lay to Rest and Bury send the corpse away; anything a quest needs comes to
-	// the player first so the quest can't get stuck.
-	void GiveQuestItemsToPlayer(RE::TESObjectREFR* a_corpse)
+	// the player so the quest can't get stuck. Like the Remains, this waits until
+	// the body has left the loaded area (taking items off a corpse that is still
+	// drawn, then sending it away in the same frame, hung the game). Each stack
+	// keeps its own extra-data list, which carries the quest link, and the
+	// inventory is read again before every move.
+	void GiveQuestItemsLater(RE::FormID a_actorID)
 	{
-		auto* actor = CorpseActor(a_corpse);
-		auto* player = RE::PlayerCharacter::GetSingleton();
-		if (!actor || !player) return;
-		auto moves = CollectItems(actor, true);
-		if (moves.empty()) return;
-		MoveItems(actor, player, moves);
-		RE::DebugNotification("You took the quest items they carried.");
+		const std::uint32_t gen = g_generation.load();
+		std::thread([a_actorID, gen]() {
+			std::this_thread::sleep_for(std::chrono::milliseconds(500));
+			auto* task = SKSE::GetTaskInterface();
+			if (!task) return;
+			task->AddTask([a_actorID, gen]() {
+				if (g_generation.load() != gen) return;   // a save was loaded meanwhile
+				auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_actorID);
+				auto* player = RE::PlayerCharacter::GetSingleton();
+				if (!actor || !player) {
+					logger::warn("Quest items: body {:08X} is gone - nothing handed over", a_actorID);
+					return;
+				}
+				std::vector<RE::TESBoundObject*> stuck;
+				std::int32_t moved = 0;
+				for (int guard = 0; guard < 256; ++guard) {
+					const auto moves = CollectItems(actor, true);
+					const auto it = std::find_if(moves.begin(), moves.end(), [&](const ItemMove& a_m) {
+						return std::find(stuck.begin(), stuck.end(), a_m.obj) == stuck.end();
+					});
+					if (it == moves.end()) break;
+					const std::int32_t before = CountOf(actor, it->obj);
+					actor->RemoveItem(it->obj, it->count, RE::ITEM_REMOVE_REASON::kStoreInContainer, it->xList, player);
+					if (CountOf(actor, it->obj) < before) {
+						++moved;
+					} else {
+						stuck.push_back(it->obj);   // could not be moved; don't try it again
+					}
+				}
+				logger::info("Quest items: moved {} stacks from {:08X} to the player ({} refused)", moved, a_actorID, stuck.size());
+				if (moved > 0) {
+					RE::DebugNotification("You took the quest items they carried.");
+				}
+			});
+		}).detach();
 	}
 
 	bool IsValidCorpse(RE::TESObjectREFR* a_ref)
@@ -300,7 +348,7 @@ namespace
 				logger::warn("Bury: PlaceObjectAtMe returned null for {:08X}", a_bodyID);
 			}
 		}
-		if (!remainsID) GiveQuestItemsToPlayer(body);
+		const bool questItems = !remainsID && HasQuestItems(actor);
 
 		PlayTurnUndeadSound();
 		body->SetActivationBlocked(false);
@@ -309,16 +357,14 @@ namespace
 		}
 		body->Disable();
 
-		if (remainsID && actor) {
-			// An ash pile's actor stays in the world, unseen; send it away too, so its
-			// belongings also leave a body that is no longer loaded.
-			if (actor != body) {
-				if (g_cleanupCell) {
-					MoveRefTo(actor, g_cleanupCell, RE::NiPoint3{ 0.0f, 0.0f, 0.0f }, actor->GetAngle());
-				}
-				actor->Disable();
+		// Items leave only a body that is no longer loaded (see MoveRemainsLater).
+		if (actor && (remainsID || questItems)) {
+			if (actor != body) SendAshActorAway(actor);
+			if (remainsID) {
+				MoveRemainsLater(actor->GetFormID(), remainsID);
+			} else {
+				GiveQuestItemsLater(actor->GetFormID());
 			}
-			MoveRemainsLater(actor->GetFormID(), remainsID);
 		}
 
 		if (PFR::Settings::GetSingleton().debug.load()) {
@@ -705,10 +751,16 @@ namespace RespectManager
 			return;
 		}
 
-		// NO explosion (removed).  Quest items to the player, sound, teleport away.
-		GiveQuestItemsToPlayer(ref);
+		// NO explosion (removed).  Sound, teleport away, then quest items to the
+		// player once the body is gone (see GiveQuestItemsLater).
+		auto* actor = CorpseActor(ref);
+		const bool questItems = HasQuestItems(actor);
 		PlayTurnUndeadSound();
 		MoveRefTo(ref, g_cleanupCell, RE::NiPoint3{ 0.0f, 0.0f, 0.0f }, ref->GetAngle());
+		if (questItems) {
+			if (actor != ref) SendAshActorAway(actor);
+			GiveQuestItemsLater(actor->GetFormID());
+		}
 
 		if (PFR::Settings::GetSingleton().debug.load()) {
 			logger::debug("LayToRest: {:08X} sent to cleanup cell", a_refID);
