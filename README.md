@@ -31,11 +31,11 @@ so a corpse behaves exactly as before until you ask for more.
     it with Take Body, or Bury it again (a grave that can be dug up once more).
     It is never cleaned up and cannot be resurrected.
     Someone you buried as an ash pile comes back up as a small burial urn,
-    "Ashes of <Name>", in front of the grave. Like the draugr it is a real
-    object: it has physics (it settles, rolls, can be grabbed), you loot it
-    like a body (QuickLoot shows what is inside, or open it), you can carry it
-    with Pick Up (Shift, hold E) and set it down anywhere, and you can Bury it
-    again (Shift, hold F). It stays an urn when empty.
+    "Ashes of <Name>", in front of the grave. You loot it like a body
+    (QuickLoot shows what is inside, or open it), you can carry it with Pick Up
+    (Shift, hold E) and set it down anywhere, and you can Bury it again (Shift,
+    hold F). It stays an urn when empty. It has no physics (the game keeps
+    containers fixed): it stands where it is set down.
   - Graves are permanent: they stay where you dug them.
   - Anyone else, and every creature (even a unique horse or dragon): quest items
     come to you first, the rest goes with the body. Loot first if you want the
@@ -45,8 +45,8 @@ so a corpse behaves exactly as before until you ask for more.
   Not offered on ash piles.
 - **Shift + E, hold on an ash pile → Pick Up** — the ashes are gathered into a small
   burial urn, "Ashes of <Name>", holding what they carried (quest items come to
-  you), and the urn goes into your inventory. Drop it to set the urn down (it has
-  physics; loot it, carry it again or bury it).
+  you), and the urn goes into your inventory. Drop it to set the urn down where
+  it lands (loot it, carry it again or bury it).
 - **Shift + E, hold → Pick Up Body** *(anything dead — people, horses, dragons)* —
   carry the corpse as an inventory item named "<Name>'s body" (weight = body +
   its gear). Drop the item to set the body back down where you dropped it. You

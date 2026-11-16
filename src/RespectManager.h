@@ -29,7 +29,7 @@ namespace RespectManager
 
 	// A dead draugr this mod raised from a grave: never resurrected.
 	bool IsRaisedRemains(RE::TESObjectREFR* a_ref);
-	// A burial urn this mod dug up: a container with physics that can be buried
+	// A burial urn this mod dug up: a container (no physics) that can be buried
 	// again (hold F) or picked up (hold E) like a body.
 	bool IsUrnRef(RE::TESObjectREFR* a_ref);
 	// Pick Up on an ash pile: the ashes are gathered into a burial urn ("Ashes of
@@ -38,6 +38,9 @@ namespace RespectManager
 	bool PickUpAshPile(RE::FormID a_refID);
 	// Put a carried urn down on a_spot (the dropped token once it has landed).
 	void SetUrnDown(RE::FormID a_urnID, RE::TESObjectREFR* a_spot);
+	// After a drop: wait until the dropped token stops moving, then SetUrnDown on
+	// it and remove the token.
+	void SetUrnDownWhenSettled(RE::FormID a_urnID, RE::FormID a_tokenID);
 
 	// Bring a dead actor back to life (RE::Actor::Resurrect).
 	void ExecuteResurrect(RE::FormID a_refID);

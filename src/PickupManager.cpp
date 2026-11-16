@@ -125,24 +125,9 @@ namespace
 		auto* body = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_bodyID);
 		if (body && token && RespectManager::IsUrnRef(body)) {
 			// The token appears in the air in front of the player and falls; a body
-			// ragdolls down from there, but an urn has nothing to fall with. Let the
-			// token land first, then set the urn down where it lies.
-			const RE::FormID tokenID = token->GetFormID();
-			std::thread([a_bodyID, tokenID]() {
-				std::this_thread::sleep_for(std::chrono::milliseconds(800));
-				if (auto* task = SKSE::GetTaskInterface()) {
-					task->AddTask([a_bodyID, tokenID]() {
-						auto* t = RE::TESForm::LookupByID<RE::TESObjectREFR>(tokenID);
-						if (t && !t->IsDisabled()) {
-							RespectManager::SetUrnDown(a_bodyID, t);
-							t->Disable();
-							t->SetDelete(true);
-						} else if (auto* b = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_bodyID)) {
-							if (auto* player = RE::PlayerCharacter::GetSingleton()) b->MoveTo(player);
-						}
-					});
-				}
-			}).detach();
+			// ragdolls down from there, but an urn (a container: no physics) would stay
+			// where it appeared. The urn is set down once the token has stopped moving.
+			RespectManager::SetUrnDownWhenSettled(a_bodyID, token->GetFormID());
 		} else {
 			if (body) {
 				if (token) {

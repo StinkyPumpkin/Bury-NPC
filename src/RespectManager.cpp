@@ -1029,77 +1029,43 @@ namespace
 	};
 
 	// ------------------------------------------------------------------
-	// A dug-up urn behaves like the raised draugr: it stays a container (aim at
-	// it for QuickLoot, open it, empty or not) and it has physics - it falls,
-	// rolls and can be grabbed. A container loads held in place, so every time
-	// an urn's 3D loads (dig up, drop after Pick Up, cell or save load) it is
-	// switched to dynamic motion. Urns waiting in the holding cell never load.
+	// A dug-up urn stays a container (aim at it for QuickLoot, open it, empty or
+	// not). It has no physics: the game keeps container references fixed (tested
+	// in game: SetMotionType(dynamic) and ApplyHavokImpulse left it in place),
+	// so it has to be set down exactly where it should stand.
 	// ------------------------------------------------------------------
-	// Switch an urn to dynamic motion once its 3D has loaded: checked every 250 ms
-	// (from a_ms on), up to 3 s; the result is logged. Called right after this mod
-	// places an urn (Dig Up, drop) - the game's "3D loaded" event does not reach
-	// this sink for the urn.
-	void MakeUrnDynamicLater(RE::FormID a_urnID, int a_ms, int a_try = 0)
+	// After a drop: watch the dropped token every 200 ms until it has stopped moving
+	// (two still readings, at most ~3 s), then set the urn down there and remove the
+	// token. Each step is a new thread that queues one task - never a task re-queued
+	// from inside a task.
+	void PollTokenThenSetDown(RE::FormID a_urnID, RE::FormID a_tokenID, RE::NiPoint3 a_last, int a_still, int a_try)
 	{
 		const std::uint32_t gen = g_generation.load();
-		std::thread([a_urnID, a_ms, a_try, gen]() {
-			std::this_thread::sleep_for(std::chrono::milliseconds(a_ms));
+		std::thread([a_urnID, a_tokenID, a_last, a_still, a_try, gen]() {
+			std::this_thread::sleep_for(std::chrono::milliseconds(200));
 			if (auto* task = SKSE::GetTaskInterface()) {
-				task->AddTask([a_urnID, a_try, gen]() {
+				task->AddTask([a_urnID, a_tokenID, a_last, a_still, a_try, gen]() {
 					if (g_generation.load() != gen) return;
-					auto* urn = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_urnID);
-					if (!IsUrn(urn) || urn->IsDisabled()) return;
-					if (!urn->Is3DLoaded()) {
-						if (a_try < 12) {
-							MakeUrnDynamicLater(a_urnID, 250, a_try + 1);   // a new thread, not a re-queued task
-						} else {
-							logger::info("Urn {:08X}: 3D never loaded - physics not set", a_urnID);
-						}
+					auto* token = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_tokenID);
+					if (!token || token->IsDisabled()) {   // the token is gone: the urn comes down at the player
+						auto* urn = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_urnID);
+						auto* player = RE::PlayerCharacter::GetSingleton();
+						if (urn && player) urn->MoveTo(player);
 						return;
 					}
-					const bool ok = urn->SetMotionType(RE::TESObjectREFR::MotionType::kDynamic, true);
-					logger::info("Urn {:08X}: dynamic motion (check {}) -> {}", a_urnID, a_try + 1, ok ? "set" : "REFUSED");
+					const RE::NiPoint3 pos = token->GetPosition();
+					const int still = (pos - a_last).Length() < 0.5f ? a_still + 1 : 0;
+					if (still >= 2 || a_try >= 15) {
+						RespectManager::SetUrnDown(a_urnID, token);
+						token->Disable();
+						token->SetDelete(true);
+						return;
+					}
+					PollTokenThenSetDown(a_urnID, a_tokenID, pos, still, a_try + 1);
 				});
 			}
 		}).detach();
 	}
-
-	class UrnPhysicsSink : public RE::BSTEventSink<RE::TESObjectLoadedEvent>
-	{
-	public:
-		static UrnPhysicsSink& GetSingleton()
-		{
-			static UrnPhysicsSink instance;
-			return instance;
-		}
-
-		void Register()
-		{
-			if (auto* holder = RE::ScriptEventSourceHolder::GetSingleton()) {
-				holder->AddEventSink<RE::TESObjectLoadedEvent>(this);
-			}
-		}
-
-		RE::BSEventNotifyControl ProcessEvent(const RE::TESObjectLoadedEvent* a_event,
-			RE::BSTEventSource<RE::TESObjectLoadedEvent>*) override
-		{
-			if (!a_event || !a_event->loaded || !g_remainsUrn) return RE::BSEventNotifyControl::kContinue;
-			const RE::FormID id = a_event->formID;
-			if (!IsUrn(RE::TESForm::LookupByID<RE::TESObjectREFR>(id))) return RE::BSEventNotifyControl::kContinue;
-			// Next frame, and again half a second on: the game may still be setting up
-			// (or resetting) the container's collision right after its 3D loads.
-			if (auto* task = SKSE::GetTaskInterface()) {
-				task->AddTask([id]() {
-					auto* urn = RE::TESForm::LookupByID<RE::TESObjectREFR>(id);
-					if (!IsUrn(urn) || urn->IsDisabled() || !urn->Is3DLoaded()) return;
-					const bool ok = urn->SetMotionType(RE::TESObjectREFR::MotionType::kDynamic, true);
-					logger::info("Urn {:08X}: 3D loaded, dynamic motion next frame -> {}", id, ok ? "set" : "REFUSED");
-				});
-			}
-			MakeUrnDynamicLater(id, 500);
-			return RE::BSEventNotifyControl::kContinue;
-		}
-	};
 
 	// Where dug-up remains come to rest: on the ground in front of the grave,
 	// toward the player (on the grave's own spot they would sit inside the
@@ -1196,7 +1162,6 @@ namespace RespectManager
 		g_actorTypeNPC = RE::TESForm::LookupByID<RE::BGSKeyword>(0x00013794);
 
 		BuryDialogSink::GetSingleton().Register();
-		UrnPhysicsSink::GetSingleton().Register();
 		if (auto* idm = RE::BSInputDeviceManager::GetSingleton()) {
 			idm->AddEventSink(&EpitaphEnterSink::GetSingleton());
 		}
@@ -1266,7 +1231,11 @@ namespace RespectManager
 		MakeUrnSmall(urn);   // still unloaded in the holding cell
 		MoveRefTo(urn, a_spot->GetParentCell(), a_spot->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, a_spot->GetAngleZ() });
 		logger::info("Urn {:08X} set down at {:.0f} {:.0f} {:.0f}", a_urnID, pos.x, pos.y, pos.z);
-		MakeUrnDynamicLater(a_urnID, 250);
+	}
+
+	void SetUrnDownWhenSettled(RE::FormID a_urnID, RE::FormID a_tokenID)
+	{
+		PollTokenThenSetDown(a_urnID, a_tokenID, RE::NiPoint3{ 1.0e9f, 1.0e9f, 1.0e9f }, 0, 0);
 	}
 
 	bool PickUpAshPile(RE::FormID a_refID)
@@ -1537,13 +1506,12 @@ namespace RespectManager
 						float heading = 0.0f;
 						RE::NiPoint3 pos = SpotBeforeGrave(g, heading);
 						// The canopic jar's origin is its centre (bounds z -10..10, half size
-						// here); a little higher so it settles onto the ground with physics.
+						// here); +8 looked right in game.
 						pos.z += 8.0f;
 						MakeUrnSmall(remains);   // still unloaded in the holding cell
 						MoveRefTo(remains, g->GetParentCell(), g->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, heading });
 						RE::DebugNotification("You dig up a burial urn.");
 						logger::info("Dig Up: urn {:08X} set down at grave {:08X}", remainsID, g->GetFormID());
-						MakeUrnDynamicLater(remainsID, 250);
 					} else if (RaiseRemainsDraugr(remains, g)) {
 						RE::DebugNotification("You dig up their remains.");
 					} else {
