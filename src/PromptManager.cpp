@@ -232,18 +232,22 @@ namespace
 		// the target can be resurrected (a dead actor, not an ash pile) and at
 		// least one of its halves is enabled. --Claude 2026-10-04: the label drops
 		// a half switched off by [Resurrect] resurrectEnabled / [Collect] collectEnabled.
-		void BuildVisible(RE::FormID a_refID, bool a_wantA, bool a_wantB, bool a_resurrect, bool a_collect)
+		// a_urn: a dug-up burial urn - only the holds do something there (Bury it
+		// again, Pick it up); the taps (Lay to Rest, Resurrect) do nothing.
+		void BuildVisible(RE::FormID a_refID, bool a_wantA, bool a_wantB, bool a_resurrect, bool a_collect, bool a_urn = false)
 		{
 			std::uint8_t n = 0;
 			if (a_wantA) {
 				m_visible[n] = m_templates[0];  // Pair A (Lay/Bury)
 				m_visible[n].refid = a_refID;
+				if (a_urn) m_visible[n].text = "Bury (hold)";
 				++n;
 			}
 			if (a_wantB && (a_resurrect || a_collect)) {
 				m_visible[n] = m_templates[1];  // Pair B (Resurrect/Take)
 				m_visible[n].refid = a_refID;
-				if (!a_resurrect) m_visible[n].text = "Take Body (hold)";
+				if (a_urn) m_visible[n].text = "Pick Up (hold)";
+				else if (!a_resurrect) m_visible[n].text = "Take Body (hold)";
 				else if (!a_collect) m_visible[n].text = "Resurrect";
 				++n;
 			}
@@ -577,6 +581,11 @@ namespace
 					PromptManager::ShowForRef(ref.get());
 					return RE::BSEventNotifyControl::kContinue;
 				}
+				// A dug-up burial urn: Bury it again or Pick it up, like a body.
+				if (!actor && RespectManager::IsUrnRef(ref.get())) {
+					PromptManager::ShowForRef(ref.get());
+					return RE::BSEventNotifyControl::kContinue;
+				}
 			}
 
 			PromptManager::Hide();
@@ -669,11 +678,12 @@ void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 	// tap / Take hold) shows only on a resurrectable dead actor (not an ash pile).
 	// A pair whose keyboard AND gamepad keys are both -1 is switched off entirely
 	// (it used to show with "???" as its key).
+	const bool urn = RespectManager::IsUrnRef(a_ref);
 	const bool wantA = s.layKeyboard.load() >= 0 || s.layGamepad.load() >= 0;
-	const bool wantB = RespectManager::CanResurrect(a_ref) &&
+	const bool wantB = (urn || RespectManager::CanResurrect(a_ref)) &&
 		(s.resurrectKeyboard.load() >= 0 || s.resurrectGamepad.load() >= 0);
 	g_sink.BuildVisible(refID, wantA, wantB,
-		s.resurrectEnabled.load() && !RespectManager::IsRaisedRemains(a_ref), s.collectEnabled.load());
+		!urn && s.resurrectEnabled.load() && !RespectManager::IsRaisedRemains(a_ref), s.collectEnabled.load(), urn);
 
 	if (!s.shiftGatesPrompts.load()) {
 		// Always-on behaviour: show the prompts whenever the crosshair is on a corpse.

@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "PickupManager.h"
 #include "Settings.h"
+#include "RespectManager.h"
 
 #include <cstdint>
 #include <mutex>
@@ -445,7 +446,9 @@ namespace PickupManager
 
 		auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_refID);
 		auto* actor = ref ? ref->As<RE::Actor>() : nullptr;
-		if (!actor || !actor->IsDead()) return;
+		// A dug-up burial urn is carried the same way as a body.
+		const bool urn = RespectManager::IsUrnRef(ref);
+		if (!urn && (!actor || !actor->IsDead())) return;
 
 		if (!g_marker) {
 			RE::DebugNotification("Corpse storage missing (BuryTakeBodies.esp not loaded).");
@@ -471,22 +474,24 @@ namespace PickupManager
 
 		// Name (display name so Real Names / rename mods show correctly).
 		std::string dispName;
-		if (const char* dn = actor->GetDisplayFullName()) dispName = dn;
+		if (const char* dn = ref->GetDisplayFullName()) dispName = dn;
 		if (dispName.empty()) {
-			if (auto* base = actor->GetBaseObject()) dispName = base->GetName();
+			if (auto* base = ref->GetBaseObject()) dispName = base->GetName();
 		}
-		std::string itemName = dispName.empty() ? "Corpse" : (dispName + "'s body");
+		std::string itemName = urn ? (dispName.empty() ? "Burial Urn" : dispName)
+		                           : (dispName.empty() ? "Corpse" : (dispName + "'s body"));
 
-		// Weight = sex base (male 130 / female 100 / other 115) + carried gear.
-		float base = 115.0f;
-		if (auto* npc = actor->GetActorBase()) {
+		// Weight = sex base (male 130 / female 100 / other 115) + carried gear;
+		// an urn weighs 2 + what is in it.
+		float base = urn ? 2.0f : 115.0f;
+		if (auto* npc = actor ? actor->GetActorBase() : nullptr) {
 			switch (npc->GetSex()) {
 			case RE::SEX::kMale:   base = 130.0f; break;
 			case RE::SEX::kFemale: base = 100.0f; break;
 			default: break;
 			}
 		}
-		float weight = base + actor->GetWeightInContainer();
+		float weight = base + ref->GetWeightInContainer();
 
 		slot->misc->fullName = RE::BSFixedString(itemName);
 		slot->misc->weight = weight;
@@ -494,7 +499,7 @@ namespace PickupManager
 		if (auto* player = RE::PlayerCharacter::GetSingleton()) {
 			player->AddObjectToContainer(slot->misc, nullptr, 1, nullptr);
 		}
-		actor->MoveTo(g_marker);
+		ref->MoveTo(g_marker);
 
 		slot->occupied = true;
 		slot->bodyID = a_refID;
