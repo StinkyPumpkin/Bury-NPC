@@ -16,7 +16,8 @@ so a corpse behaves exactly as before until you ask for more.
   (`requiresShovel`). Plays the shovel animation, then a text box asks for an
   **epitaph**; on confirm a gravestone (ships in `BuryTakeBodies.esp`) is
   placed at the body inscribed with the deceased's **display name** (Real
-  Names / rename mods show correctly) + your message. Cancel the box (Esc) to
+  Names / rename mods show correctly) + your message. Press Enter on an empty
+  box and the grave reads "Here lies <Name>". Cancel the box (Esc) to
   leave the body untouched. The text box uses **UIExtensions**; without it (or if
   the box fails to open) the grave is placed with the name only. The headstone
   stands upright on the ground, turned toward you.
@@ -48,6 +49,10 @@ so a corpse behaves exactly as before until you ask for more.
   2. **Coexists with Hunterborn/harvest** — pick-up is a Shift-gated hold, not
      an activate-button takeover, so looting and harvesting still work.
   3. **Dremora (and everything else) can be collected** — no race whitelist.
+- **Edit Epitaph** — look at a grave you placed, hold Shift, **press F**: the
+  epitaph box opens with the current epitaph in it. Enter re-engraves the grave
+  (an empty box gives "Here lies <Name>"); Esc keeps the old inscription. Needs
+  UIExtensions.
 - **Destroy a grave** — look at a grave you placed, hold Shift, **hold E** to
   dig it out. Only affects graves this mod placed.
 

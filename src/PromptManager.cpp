@@ -24,10 +24,12 @@ namespace
 	constexpr SkyPromptAPI::EventID EVENT_PAIR_A = 47312;
 	constexpr SkyPromptAPI::EventID EVENT_PAIR_B = 47316;
 	constexpr SkyPromptAPI::EventID EVENT_DESTROY = 47315;
+	constexpr SkyPromptAPI::EventID EVENT_EPITAPH = 47317;
 
 	constexpr SkyPromptAPI::ActionID ACTION_PAIR_A = 0;
 	constexpr SkyPromptAPI::ActionID ACTION_PAIR_B = 1;
 	constexpr SkyPromptAPI::ActionID ACTION_DESTROY = 3;
+	constexpr SkyPromptAPI::ActionID ACTION_EPITAPH = 4;
 
 	SkyPromptAPI::ClientID    g_clientID = 0;
 	std::atomic<bool>         g_showing{ false };
@@ -76,6 +78,7 @@ namespace
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_pairAKeys[2];
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_pairBKeys[2];
 	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_graveKeys[2];
+	std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID> g_epitaphKeys[2];   // the Lay key
 
 	// Tap-vs-hold state per pair: kAccepted (hold bar filled) sets it; kUp
 	// reads-and-clears it — a release with the flag still false was a TAP.
@@ -332,15 +335,27 @@ namespace
 	}
 
 	// ------------------------------------------------------------------
-	// Destroy Grave — a one-prompt sink shown only while the modifier is held
-	// on one of our graves.
+	// Grave prompts, shown only while the modifier is held on one of our
+	// graves: Edit Epitaph (a press of the Lay key) and Destroy Grave / Dig Up
+	// (a hold of the grave key).
 	// ------------------------------------------------------------------
 	struct GravePromptSink : public SkyPromptAPI::PromptSink
 	{
-		SkyPromptAPI::Prompt m_prompt;
+		SkyPromptAPI::Prompt m_epitaph;
+		SkyPromptAPI::Prompt m_prompt;    // Destroy Grave / Dig Up
+		SkyPromptAPI::Prompt m_visible[2];
+		std::atomic<std::uint8_t> m_count{ 0 };
 
 		GravePromptSink()
 		{
+			m_epitaph.text = "Edit Epitaph";
+			m_epitaph.eventID = EVENT_EPITAPH;
+			m_epitaph.actionID = ACTION_EPITAPH;
+			m_epitaph.type = SkyPromptAPI::PromptType::kSinglePress;
+			m_epitaph.refid = 0;
+			m_epitaph.text_color = 0xFFFFFFFF;
+			m_epitaph.progress = 0.0f;
+
 			m_prompt.text = "Destroy Grave";
 			m_prompt.eventID = EVENT_DESTROY;
 			m_prompt.actionID = ACTION_DESTROY;
@@ -350,9 +365,17 @@ namespace
 			m_prompt.progress = 0.0f;
 		}
 
+		void BuildVisible(bool a_epitaph, bool a_destroy)
+		{
+			std::uint8_t n = 0;
+			if (a_epitaph) m_visible[n++] = m_epitaph;
+			if (a_destroy) m_visible[n++] = m_prompt;
+			m_count.store(n);
+		}
+
 		std::span<const SkyPromptAPI::Prompt> GetPrompts() const override
 		{
-			return std::span<const SkyPromptAPI::Prompt>(&m_prompt, 1);
+			return std::span<const SkyPromptAPI::Prompt>(m_visible, m_count.load());
 		}
 
 		void ProcessEvent(SkyPromptAPI::PromptEvent a_event) const override
@@ -361,9 +384,15 @@ namespace
 			RE::FormID graveID = g_currentGraveID.load();
 			if (graveID == 0) return;
 			if (!ModifierPhysicallyDown()) return;   // --Claude 2026-10-12: stale reveal, see g_armedA
-			SKSE::GetTaskInterface()->AddTask([graveID]() {
-				RespectManager::DestroyGrave(graveID);
-			});
+			if (a_event.prompt.actionID == ACTION_EPITAPH) {
+				SKSE::GetTaskInterface()->AddTask([graveID]() {
+					RespectManager::ExecuteEditEpitaph(graveID);
+				});
+			} else if (a_event.prompt.actionID == ACTION_DESTROY) {
+				SKSE::GetTaskInterface()->AddTask([graveID]() {
+					RespectManager::DestroyGrave(graveID);
+				});
+			}
 		}
 	};
 
@@ -374,10 +403,13 @@ namespace
 		if (g_clientID == 0) return;
 		RE::FormID graveID = g_currentGraveID.load();
 		if (graveID == 0) return;
+		auto& s = PFR::Settings::GetSingleton();
 		// graveDestroyEnabled = false hides Destroy Grave, but a grave holding a
 		// unique NPC's remains can still be dug up - otherwise their things are lost.
 		const bool hasRemains = RespectManager::GraveHasRemains(graveID);
-		if (!PFR::Settings::GetSingleton().graveDestroyEnabled.load() && !hasRemains) return;
+		const bool destroy = s.graveDestroyEnabled.load() || hasRemains;
+		// Edit Epitaph is on the Lay key; both its keys at -1 switch it off.
+		const bool epitaph = s.layKeyboard.load() >= 0 || s.layGamepad.load() >= 0;
 		// refid 0 = not anchored to the grave's on-screen position (a grave sits
 		// on the ground, which would drag the prompt to the bottom of the
 		// screen / off the left edge).  With 0 it renders at the theme's fixed
@@ -385,6 +417,8 @@ namespace
 		g_graveSink.m_prompt.refid = 0;
 		// A grave holding a unique NPC's remains is dug up instead of destroyed.
 		g_graveSink.m_prompt.text = hasRemains ? "Dig Up" : "Destroy Grave";
+		g_graveSink.BuildVisible(epitaph, destroy);
+		if (g_graveSink.m_count.load() == 0) return;
 		(void)SkyPromptAPI::SendPrompt(&g_graveSink, g_clientID);
 		g_graveShowing.store(true);
 	}
@@ -493,6 +527,11 @@ namespace
 			static_cast<SkyPromptAPI::ButtonID>(s.graveDestroyGamepad.load()) };
 		g_graveSink.m_prompt.button_key =
 			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_graveKeys, 2);
+		// Edit Epitaph is a press of the Lay key (F) on a grave.
+		g_epitaphKeys[0] = g_pairAKeys[0];
+		g_epitaphKeys[1] = g_pairAKeys[1];
+		g_graveSink.m_epitaph.button_key =
+			std::span<const std::pair<RE::INPUT_DEVICE, SkyPromptAPI::ButtonID>>(g_epitaphKeys, 2);
 	}
 
 	class CrosshairSink : public RE::BSTEventSink<SKSE::CrosshairRefEvent>
@@ -655,15 +694,13 @@ void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 void PromptManager::ShowGraveForRef(RE::TESObjectREFR* a_ref)
 {
 	if (!a_ref || g_clientID == 0) return;
-	if (!PFR::Settings::GetSingleton().graveDestroyEnabled.load() &&
-		!RespectManager::GraveHasRemains(a_ref->GetFormID())) return;
 
 	// Grave and body prompts are mutually exclusive.
 	HideBodyPrompt();
 	g_currentRefID.store(0);
 
-	// Just note which grave we're on — the Destroy Grave prompt itself only
-	// appears when the reveal modifier is pressed (ModifierInputSink), so the
+	// Just note which grave we're on — the grave prompts themselves only
+	// appear when the reveal modifier is pressed (ModifierInputSink), so the
 	// epitaph stays clean until the player deliberately holds it.
 	g_currentGraveID.store(a_ref->GetFormID());
 }

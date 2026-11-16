@@ -50,6 +50,7 @@ buryAnimationDelay = 4.0
 ; TWO keys, each a TAP/HOLD prompt (revealed while you hold Shift on a corpse):
 ;   layToRest key  - TAP = Lay to Rest,  HOLD = Bury with Gravestone
 ;   resurrect key  - TAP = Resurrect,    HOLD = Take Body
+; On one of this mod's graves (Shift held) the layToRest key = Edit Epitaph.
 ; DX scancodes: F = 33 (0x21), E = 18 (0x12). Gamepad -1 = disabled.
 ; A key set to -1 (keyboard AND gamepad) removes that whole prompt line.
 layToRestKeyboard = 33

@@ -42,6 +42,9 @@ namespace RespectManager
 	void DestroyGrave(RE::FormID a_graveID);
 	// True when the grave holds a unique NPC's remains (the prompt then reads Dig Up).
 	bool GraveHasRemains(RE::FormID a_graveID);
+	// Re-open the epitaph box on one of our graves, filled with its current
+	// epitaph; confirming re-engraves it (empty = "Here lies <Name>").
+	void ExecuteEditEpitaph(RE::FormID a_graveID);
 	// New game / load: drop work that still holds FormIDs from the old game.
 	void OnGameReset();
 }

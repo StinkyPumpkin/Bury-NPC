@@ -52,6 +52,10 @@ namespace
 	std::string  g_buryMessage;
 	bool         g_buryConfirmed = false;
 	bool         g_buryBoxOpened = false;   // the text box actually appeared
+	// Edit Epitaph uses the same box: the grave being re-engraved (0 = a bury)
+	// and its current epitaph, put into the box when it opens.
+	RE::FormID   g_buryEditGraveID = 0;
+	std::string  g_buryPrefill;
 
 	// ------------------------------------------------------------------
 	// Move a reference to another cell (used to send the corpse to the
@@ -443,9 +447,13 @@ namespace
 		}
 	}
 
+	constexpr std::string_view kHereLies = "Here lies ";
+	constexpr std::string_view kEpitaphSep = " — ";
+
+	// No epitaph: "Here lies <Name>". With one: "<Name> — <epitaph>".
 	std::string BuildEngraving(const std::string& a_deadName, const std::string& a_message)
 	{
-		std::string engraving = a_deadName.empty() ? std::string("Here lies the fallen") : a_deadName;
+		const std::string hereLies = std::string(kHereLies) + (a_deadName.empty() ? std::string("the fallen") : a_deadName);
 		// v1.4.3: the NAME is engraved automatically — if the player typed the name again
 		// (field report: grave read "Ivana — Ivana"), treat it as no message.
 		auto iequals = [](const std::string& a, const std::string& b) {
@@ -455,11 +463,30 @@ namespace
 					return false;
 			return true;
 		};
-		if (!a_message.empty() && !iequals(a_message, a_deadName)) {
-			engraving += " — ";
-			engraving += a_message;
+		if (a_message.empty() || iequals(a_message, a_deadName) || iequals(a_message, hereLies)) {
+			return hereLies;
 		}
+		std::string engraving = a_deadName.empty() ? hereLies : a_deadName;
+		engraving += kEpitaphSep;
+		engraving += a_message;
 		return engraving;
+	}
+
+	// The reverse of BuildEngraving, for Edit Epitaph: the name and the epitaph
+	// on a grave (older graves read just "<Name>").
+	void SplitEngraving(const std::string& a_engraving, std::string& a_deadName, std::string& a_message)
+	{
+		std::string rest = a_engraving;
+		if (rest.starts_with(kHereLies)) rest.erase(0, kHereLies.size());
+		const auto sep = rest.find(kEpitaphSep);
+		if (sep == std::string::npos) {
+			a_deadName = rest;
+			a_message.clear();
+		} else {
+			a_deadName = rest.substr(0, sep);
+			a_message = rest.substr(sep + kEpitaphSep.size());
+		}
+		if (a_deadName == "the fallen") a_deadName.clear();
 	}
 
 	// ------------------------------------------------------------------
@@ -521,22 +548,40 @@ namespace
 	// ------------------------------------------------------------------
 	void FinalizeBury()
 	{
-		RE::FormID  bodyID;
+		RE::FormID  bodyID, editGraveID;
 		std::string deadName, message;
 		bool        confirmed;
 		{
 			std::scoped_lock lk(g_buryMutex);
 			if (!g_burying) return;
 			bodyID = g_buryBodyID;
+			editGraveID = g_buryEditGraveID;
 			deadName = g_buryDeadName;
 			message = g_buryMessage;
 			confirmed = g_buryConfirmed;
 			g_burying = false;
 			g_buryBodyID = 0;
+			g_buryEditGraveID = 0;
 			g_buryDeadName.clear();
 			g_buryMessage.clear();
+			g_buryPrefill.clear();
 			g_buryConfirmed = false;
 			g_buryBoxOpened = false;
+		}
+
+		if (editGraveID) {
+			// Edit Epitaph: Esc keeps the old inscription.
+			if (!confirmed) return;
+			std::string engraving = BuildEngraving(deadName, message);
+			if (auto* task = SKSE::GetTaskInterface()) {
+				task->AddTask([editGraveID, engraving]() {
+					auto* grave = RE::TESForm::LookupByID<RE::TESObjectREFR>(editGraveID);
+					if (!grave || grave->GetBaseObject() != g_graveActivator) return;
+					grave->SetDisplayName(RE::BSFixedString(engraving), true);
+					logger::info("Edit Epitaph: grave {:08X} now reads '{}'", editGraveID, engraving);
+				});
+			}
+			return;
 		}
 
 		if (!confirmed) {
@@ -557,11 +602,12 @@ namespace
 	// Open the UIExtensions text-entry box (registered custom menu name
 	// "textentrymenu") via the Papyrus VM.
 	// ------------------------------------------------------------------
-	void OpenBuryTextEntry()
+	void OpenBuryTextEntry(bool a_edit)
 	{
-		// v1.4.3 (user request): tell the player what the box is for — the NAME goes on
+		// v1.4.3: tell the player what the box is for — the NAME goes on
 		// automatically, the box is only the epitaph.
-		RE::DebugNotification("Write your epitaph — the name is engraved automatically.");
+		RE::DebugNotification(a_edit ? "Edit the epitaph — leave it empty for \"Here lies\" and the name."
+		                             : "Write your epitaph — the name is engraved automatically.");
 
 		// If the box never appears (UIExtensions installed but its menu failed),
 		// the body would stay blocked from activation for good, and that block is
@@ -572,18 +618,26 @@ namespace
 			if (auto* task = SKSE::GetTaskInterface()) {
 				task->AddTask([gen]() {
 					if (g_generation.load() != gen) return;
-					RE::FormID bodyID = 0;
+					RE::FormID bodyID = 0, editGraveID = 0;
 					std::string deadName;
 					{
 						std::scoped_lock lk(g_buryMutex);
 						if (!g_burying || g_buryBoxOpened) return;
 						bodyID = g_buryBodyID;
+						editGraveID = g_buryEditGraveID;
 						deadName = g_buryDeadName;
 						g_burying = false;
 						g_buryBodyID = 0;
+						g_buryEditGraveID = 0;
 						g_buryDeadName.clear();
 						g_buryMessage.clear();
+						g_buryPrefill.clear();
 						g_buryConfirmed = false;
+					}
+					if (editGraveID) {
+						logger::warn("Edit Epitaph: the text box did not open for grave {:08X}", editGraveID);
+						RE::DebugNotification("The epitaph box didn't open.");
+						return;
 					}
 					logger::warn("Bury: the epitaph box did not open; burying {:08X} with the name only", bodyID);
 					RE::DebugNotification("The epitaph box didn't open - buried with the name only.");
@@ -611,8 +665,18 @@ namespace
 	// TextField to its _root.textEntry clip once the SWF reports it loaded.
 	// Scaleform work, so this runs as a UI task.
 	// ------------------------------------------------------------------
-	void AddEpitaphTip(const std::string& a_deadName)
+	void AddEpitaphTip(const std::string& a_deadName, bool a_edit, const std::string& a_prefill)
 	{
+		// Edit Epitaph: start from the epitaph already on the grave.
+		if (!a_prefill.empty()) {
+			if (auto* ui = RE::UI::GetSingleton()) {
+				if (auto menu = ui->GetMenu("CustomMenu"); menu && menu->uiMovie) {
+					const RE::GFxValue arg[1]{ a_prefill.c_str() };
+					menu->uiMovie->Invoke("_root.textEntry.setTextEntryMenuText", nullptr, arg, 1);
+				}
+			}
+		}
+
 		auto* ui = RE::UI::GetSingleton();
 		auto menu = ui ? ui->GetMenu("CustomMenu") : nullptr;
 		auto* movie = menu ? menu->uiMovie.get() : nullptr;
@@ -652,7 +716,7 @@ namespace
 		tip.Invoke("setNewTextFormat", nullptr, fmtArg, 1);
 
 		const std::string text = "Here lies " + (a_deadName.empty() ? std::string("the fallen") : a_deadName) +
-			" — write an epitaph:";
+			(a_edit ? " — edit the epitaph:" : " — write an epitaph:");
 		tip.SetMember("text", text.c_str());
 	}
 
@@ -688,15 +752,17 @@ namespace
 		{
 			if (!a_event) return RE::BSEventNotifyControl::kContinue;
 			if (a_event->eventName == "UITextEntryMenu_LoadMenu") {
-				std::string deadName;
-				bool active;
+				std::string deadName, prefill;
+				bool active, edit;
 				{
 					std::scoped_lock lk(g_buryMutex);
 					active = g_burying;
+					edit = g_buryEditGraveID != 0;
 					deadName = g_buryDeadName;
+					prefill = g_buryPrefill;
 				}
 				if (active) {
-					SKSE::GetTaskInterface()->AddUITask([deadName]() { AddEpitaphTip(deadName); });
+					SKSE::GetTaskInterface()->AddUITask([deadName, edit, prefill]() { AddEpitaphTip(deadName, edit, prefill); });
 				}
 			} else if (a_event->eventName == "UITextEntryMenu_TextChanged") {
 				std::scoped_lock lk(g_buryMutex);
@@ -1071,12 +1137,50 @@ namespace RespectManager
 			g_buryBoxOpened = false;
 			g_burying = true;
 			g_buryBodyID = a_refID;
+			g_buryEditGraveID = 0;
 			g_buryDeadName = deadName;
 			g_buryMessage.clear();
+			g_buryPrefill.clear();
 			g_buryConfirmed = false;
 		}
 
-		OpenBuryTextEntry();
+		OpenBuryTextEntry(false);
+	}
+
+	void ExecuteEditEpitaph(RE::FormID a_graveID)
+	{
+		auto* grave = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_graveID);
+		if (!IsOurGrave(grave)) return;
+		if (!g_hasUIExtensions) {
+			RE::DebugNotification("Bury Take Bodies: install UIExtensions to edit epitaphs.");
+			return;
+		}
+
+		const char* current = grave->GetDisplayFullName();
+		std::string deadName, message;
+		SplitEngraving(current ? std::string(current) : std::string(), deadName, message);
+
+		PromptManager::Hide();
+
+		{
+			std::scoped_lock lk(g_buryMutex);
+			// A bury whose box never closed keeps its body blocked - let it go.
+			if (g_burying && g_buryBodyID) {
+				if (auto* old = RE::TESForm::LookupByID<RE::TESObjectREFR>(g_buryBodyID)) {
+					old->SetActivationBlocked(false);
+				}
+			}
+			g_buryBoxOpened = false;
+			g_burying = true;
+			g_buryBodyID = 0;
+			g_buryEditGraveID = a_graveID;
+			g_buryDeadName = deadName;
+			g_buryMessage.clear();
+			g_buryPrefill = message;
+			g_buryConfirmed = false;
+		}
+
+		OpenBuryTextEntry(true);
 	}
 
 	bool IsOurGrave(RE::TESObjectREFR* a_ref)
@@ -1091,8 +1195,10 @@ namespace RespectManager
 		std::scoped_lock lk(g_buryMutex);
 		g_burying = false;
 		g_buryBodyID = 0;
+		g_buryEditGraveID = 0;
 		g_buryDeadName.clear();
 		g_buryMessage.clear();
+		g_buryPrefill.clear();
 		g_buryConfirmed = false;
 		g_buryBoxOpened = false;
 	}
