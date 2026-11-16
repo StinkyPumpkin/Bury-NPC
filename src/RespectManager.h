@@ -5,8 +5,8 @@ namespace RespectManager
 	// Cache forms once the game data is loaded.
 	void OnDataLoaded();
 
-	// Short flavour of the original mod: NO explosion (removed on user
-	// request).  Plays the turn-undead sound and teleports the body to the
+	// Short flavour of the original mod: NO explosion (removed).  Plays the
+	// turn-undead sound and teleports the body to the
 	// vanilla dead-body cleanup cell so it vanishes.
 	void ExecuteLayToRest(RE::FormID a_refID);
 
