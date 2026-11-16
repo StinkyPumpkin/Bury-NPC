@@ -190,6 +190,26 @@ namespace
 		std::int32_t        count;
 	};
 
+	// Something a player can see and take in a loot menu. Mods put hidden
+	// non-playable armor on NPCs (TNG's genital cover, SMP physics objects), and a
+	// freshly placed NPC can still list an unresolved leveled list from its base
+	// container: none of those show in a menu, so in a container they could never
+	// be emptied (the urn would never turn into its jar).
+	bool IsLootable(RE::TESBoundObject* a_obj)
+	{
+		if (!a_obj || a_obj->Is(RE::FormType::LeveledItem)) return false;
+		if (auto* armo = a_obj->As<RE::TESObjectARMO>()) {
+			return (armo->GetFormFlags() & RE::TESObjectARMO::RecordFlags::kNonPlayable) == 0;
+		}
+		if (auto* weap = a_obj->As<RE::TESObjectWEAP>()) {
+			return !weap->weaponData.flags.any(RE::TESObjectWEAP::Data::Flag::kNonPlayable);
+		}
+		if (auto* ammo = a_obj->As<RE::TESAmmo>()) {
+			return !ammo->data.flags.any(RE::AMMO_DATA::Flag::kNonPlayable);
+		}
+		return true;
+	}
+
 	std::vector<ItemMove> CollectItems(RE::TESObjectREFR* a_from, bool a_questOnly)
 	{
 		std::vector<ItemMove> moves;
@@ -198,6 +218,7 @@ namespace
 		for (auto& [obj, data] : inv) {
 			auto& [count, entry] = data;
 			if (!obj || count <= 0 || !entry) continue;
+			if (!IsLootable(obj)) continue;   // hidden: stays with the body
 			const bool quest = entry->IsQuestObject();
 			if (a_questOnly && !quest) continue;
 			// Other mods tag bodies with worthless marker items (RSE's "Bandit On
@@ -598,6 +619,15 @@ namespace
 					if (!grave || grave->GetBaseObject() != g_graveActivator) return;
 					grave->SetDisplayName(RE::BSFixedString(engraving), true);
 					logger::info("Edit Epitaph: grave {:08X} now reads '{}'", editGraveID, engraving);
+					// The crosshair keeps the old name until it loses the grave. Forget the
+					// current target: the next frame picks the grave again as a new target
+					// and reads the new name. (VR keeps its pick data elsewhere: skipped.)
+					if (!REL::Module::IsVR()) {
+						if (auto* pick = RE::CrosshairPickData::GetSingleton();
+							pick && pick->target.get().get() == grave) {
+							pick->target = RE::ObjectRefHandle{};
+						}
+					}
 				});
 			}
 			return;
@@ -815,6 +845,69 @@ namespace
 	};
 
 	// ------------------------------------------------------------------
+	// Enter on an EMPTY box. The text box ignores Enter while it holds no text
+	// (it stays open, nothing is sent), so "no epitaph" could not be confirmed.
+	// While our box is up, Enter is checked here: if the field is empty the box
+	// is closed for it and the bury / edit goes ahead with no epitaph
+	// ("Here lies <Name>"). With text in the field the box handles Enter itself.
+	// ------------------------------------------------------------------
+	void ConfirmEmptyEpitaphIfBlank()
+	{
+		{
+			std::scoped_lock lk(g_buryMutex);
+			if (!g_burying || !g_buryBoxOpened || g_buryConfirmed) return;
+		}
+		auto* ui = RE::UI::GetSingleton();
+		auto menu = ui ? ui->GetMenu("CustomMenu") : nullptr;
+		auto* movie = menu ? menu->uiMovie.get() : nullptr;
+		if (!movie) return;
+		RE::GFxValue text;
+		if (!movie->GetVariable(&text, "_root.textEntry.TextInputInstance.textField.text") || !text.IsString()) return;
+		const std::string_view s = text.GetString();
+		if (s.find_first_not_of(" \t\r\n") != std::string_view::npos) return;   // has text: the box sends it
+		{
+			std::scoped_lock lk(g_buryMutex);
+			if (!g_burying || g_buryConfirmed) return;
+			g_buryMessage.clear();
+			g_buryConfirmed = true;
+		}
+		if (auto* queue = RE::UIMessageQueue::GetSingleton()) {
+			queue->AddMessage("CustomMenu", RE::UI_MESSAGE_TYPE::kHide, nullptr);
+		}
+	}
+
+	class EpitaphEnterSink : public RE::BSTEventSink<RE::InputEvent*>
+	{
+	public:
+		static EpitaphEnterSink& GetSingleton()
+		{
+			static EpitaphEnterSink instance;
+			return instance;
+		}
+
+		RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* a_events,
+			RE::BSTEventSource<RE::InputEvent*>*) override
+		{
+			if (!a_events) return RE::BSEventNotifyControl::kContinue;
+			for (auto* e = *a_events; e; e = e->next) {
+				auto* btn = e->GetEventType() == RE::INPUT_EVENT_TYPE::kButton ? e->AsButtonEvent() : nullptr;
+				if (!btn || btn->GetDevice() != RE::INPUT_DEVICE::kKeyboard || !btn->IsDown()) continue;
+				const auto key = btn->GetIDCode();
+				if (key != 0x1C && key != 0x9C) continue;   // Enter, numpad Enter
+				bool open;
+				{
+					std::scoped_lock lk(g_buryMutex);
+					open = g_burying && g_buryBoxOpened && !g_buryConfirmed;
+				}
+				if (open) {
+					SKSE::GetTaskInterface()->AddUITask([]() { ConfirmEmptyEpitaphIfBlank(); });
+				}
+			}
+			return RE::BSEventNotifyControl::kContinue;
+		}
+	};
+
+	// ------------------------------------------------------------------
 	// Once a dug-up burial urn has been emptied it becomes a jar of the dead's
 	// ashes: a carryable item named like the urn ("Ashes of <Name>") in its
 	// place, to take home and set on a shelf. Checked when the container menu
@@ -830,8 +923,10 @@ namespace
 	{
 		auto* urn = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_urnID);
 		if (!IsUrn(urn) || urn->IsDisabled()) return;
+		// Only what a player could take counts: hidden leftovers (urns filled before
+		// CollectItems skipped them) go with the urn.
 		for (const auto& [obj, count] : urn->GetInventoryCounts()) {
-			if (count > 0) return;
+			if (count > 0 && IsLootable(obj)) return;
 		}
 		RE::FormID jarID = 0;
 		if (g_ashesJar) {
@@ -1006,6 +1101,9 @@ namespace RespectManager
 
 		BuryDialogSink::GetSingleton().Register();
 		UrnSink::GetSingleton().Register();
+		if (auto* idm = RE::BSInputDeviceManager::GetSingleton()) {
+			idm->AddEventSink(&EpitaphEnterSink::GetSingleton());
+		}
 
 		logger::info("RespectManager: cleanupCell={} sound={} graveActivator={} remains={}/{} urn={} jar={} draugr={}/{} ActorTypeNPC={} UIExtensions={}",
 			g_cleanupCell != nullptr, g_soundForm != nullptr, g_graveActivator != nullptr,
@@ -1256,6 +1354,7 @@ namespace RespectManager
 						pos.z += 10.0f;   // the canopic jar's origin is its centre (bounds z -10..10)
 						MoveRefTo(remains, g->GetParentCell(), g->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, heading });
 						RE::DebugNotification("You dig up a burial urn.");
+						logger::info("Dig Up: urn {:08X} set down at grave {:08X}", remainsID, g->GetFormID());
 					} else if (RaiseRemainsDraugr(remains, g)) {
 						RE::DebugNotification("You dig up their remains.");
 					} else {
