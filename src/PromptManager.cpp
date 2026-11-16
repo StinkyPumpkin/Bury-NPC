@@ -234,7 +234,9 @@ namespace
 		// a half switched off by [Resurrect] resurrectEnabled / [Collect] collectEnabled.
 		// a_urn: a dug-up burial urn - only the holds do something there (Bury it
 		// again, Pick it up); the taps (Lay to Rest, Resurrect) do nothing.
-		void BuildVisible(RE::FormID a_refID, bool a_wantA, bool a_wantB, bool a_resurrect, bool a_collect, bool a_urn = false)
+		// a_ashes: an ash pile - its hold gathers the ashes into an urn and picks that up.
+		void BuildVisible(RE::FormID a_refID, bool a_wantA, bool a_wantB, bool a_resurrect, bool a_collect, bool a_urn = false,
+			bool a_ashes = false)
 		{
 			std::uint8_t n = 0;
 			if (a_wantA) {
@@ -246,7 +248,7 @@ namespace
 			if (a_wantB && (a_resurrect || a_collect)) {
 				m_visible[n] = m_templates[1];  // Pair B (Resurrect/Take)
 				m_visible[n].refid = a_refID;
-				if (a_urn) m_visible[n].text = "Pick Up (hold)";
+				if (a_urn || a_ashes) m_visible[n].text = "Pick Up (hold)";
 				else if (!a_resurrect) m_visible[n].text = "Take Body (hold)";
 				else if (!a_collect) m_visible[n].text = "Resurrect";
 				++n;
@@ -302,7 +304,9 @@ namespace
 					if (!g_armedB.load()) return;
 					g_holdFiredB.store(true);
 					if (s.collectEnabled.load()) {
-						task->AddTask([refID]() { PickupManager::ExecuteCollect(refID); });
+						task->AddTask([refID]() {
+							if (!RespectManager::PickUpAshPile(refID)) PickupManager::ExecuteCollect(refID);
+						});
 					}
 				} else if (etype == ET::kUp) {                // release
 					if (!SamePress(g_armedB, g_pressRefB, refID)) return;
@@ -679,11 +683,13 @@ void PromptManager::ShowForRef(RE::TESObjectREFR* a_ref)
 	// A pair whose keyboard AND gamepad keys are both -1 is switched off entirely
 	// (it used to show with "???" as its key).
 	const bool urn = RespectManager::IsUrnRef(a_ref);
+	const bool ashes = !urn && RespectManager::IsAshPile(a_ref);
 	const bool wantA = s.layKeyboard.load() >= 0 || s.layGamepad.load() >= 0;
-	const bool wantB = (urn || RespectManager::CanResurrect(a_ref)) &&
+	const bool wantB = (urn || ashes || RespectManager::CanResurrect(a_ref)) &&
 		(s.resurrectKeyboard.load() >= 0 || s.resurrectGamepad.load() >= 0);
 	g_sink.BuildVisible(refID, wantA, wantB,
-		!urn && s.resurrectEnabled.load() && !RespectManager::IsRaisedRemains(a_ref), s.collectEnabled.load(), urn);
+		!urn && !ashes && s.resurrectEnabled.load() && !RespectManager::IsRaisedRemains(a_ref), s.collectEnabled.load(),
+		urn, ashes);
 
 	if (!s.shiftGatesPrompts.load()) {
 		// Always-on behaviour: show the prompts whenever the crosshair is on a corpse.

@@ -32,6 +32,10 @@ namespace RespectManager
 	// A burial urn this mod dug up: a container with physics that can be buried
 	// again (hold F) or picked up (hold E) like a body.
 	bool IsUrnRef(RE::TESObjectREFR* a_ref);
+	// Pick Up on an ash pile: the ashes are gathered into a burial urn ("Ashes of
+	// <Name>", with what they carried; quest items go to the player) and the urn
+	// is carried like a body. False when the ref is not an ash pile.
+	bool PickUpAshPile(RE::FormID a_refID);
 
 	// Bring a dead actor back to life (RE::Actor::Resurrect).
 	void ExecuteResurrect(RE::FormID a_refID);

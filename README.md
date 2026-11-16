@@ -43,6 +43,10 @@ so a corpse behaves exactly as before until you ask for more.
 - **Shift + E, tap → Resurrect** — brings the actor back (`resurrectResetInventory`
   decides whether they come back re-equipped or keep the looted inventory).
   Not offered on ash piles.
+- **Shift + E, hold on an ash pile → Pick Up** — the ashes are gathered into a small
+  burial urn, "Ashes of <Name>", holding what they carried (quest items come to
+  you), and the urn goes into your inventory. Drop it to set the urn down (it has
+  physics; loot it, carry it again or bury it).
 - **Shift + E, hold → Pick Up Body** *(anything dead — people, horses, dragons)* —
   carry the corpse as an inventory item named "<Name>'s body" (weight = body +
   its gear). Drop the item to set the body back down where you dropped it. You

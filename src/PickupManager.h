@@ -15,6 +15,8 @@ namespace PickupManager
 	// Pick the body up: name a free corpse token after it, stash the body in
 	// the holding cell, and add the token to the player.
 	void ExecuteCollect(RE::FormID a_refID);
+	// A carry slot is free (up to 50 bodies / urns at once).
+	bool HasFreeSlot();
 
 	// The persistent marker in our holding cell (BuryTakeBodies.esp 0x801), or null.
 	RE::TESObjectREFR* GetHoldingMarker();

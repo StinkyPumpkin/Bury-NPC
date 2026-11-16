@@ -323,6 +323,54 @@ namespace
 	// drawn, then sending it away in the same frame, hung the game). Each stack
 	// keeps its own extra-data list, which carries the quest link, and the
 	// inventory is read again before every move.
+	// Main thread, body already out of the loaded area. Returns the stacks moved.
+	std::int32_t MoveQuestItemsToPlayer(RE::Actor* a_actor)
+	{
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!a_actor || !player) return 0;
+		std::vector<RE::TESBoundObject*> stuck;
+		std::int32_t moved = 0;
+		for (int guard = 0; guard < 256; ++guard) {
+			const auto moves = CollectItems(a_actor, true);
+			const auto it = std::find_if(moves.begin(), moves.end(), [&](const ItemMove& a_m) {
+				return std::find(stuck.begin(), stuck.end(), a_m.obj) == stuck.end();
+			});
+			if (it == moves.end()) break;
+			const std::int32_t before = CountOf(a_actor, it->obj);
+			a_actor->RemoveItem(it->obj, it->count, RE::ITEM_REMOVE_REASON::kStoreInContainer, it->xList, player);
+			if (CountOf(a_actor, it->obj) < before) {
+				++moved;
+			} else {
+				stuck.push_back(it->obj);   // could not be moved; don't try it again
+			}
+		}
+		logger::info("Quest items: moved {} stacks from {:08X} to the player ({} refused)", moved, a_actor->GetFormID(), stuck.size());
+		if (moved > 0) {
+			RE::DebugNotification("You took the quest items they carried.");
+		}
+		return moved;
+	}
+
+	// Main thread: every item that can be looted, per item type with no extra-data
+	// list (the game picks the stacks, the way Papyrus RemoveItem does).
+	std::size_t MoveAllItems(RE::Actor* a_actor, RE::TESObjectREFR* a_to)
+	{
+		std::vector<std::pair<RE::TESBoundObject*, std::int32_t>> stacks;
+		for (const auto& m : CollectItems(a_actor, false)) {
+			auto it = std::find_if(stacks.begin(), stacks.end(),
+				[&](const auto& s) { return s.first == m.obj; });
+			if (it == stacks.end()) {
+				stacks.emplace_back(m.obj, m.count);
+			} else {
+				it->second += m.count;
+			}
+		}
+		for (const auto& [obj, count] : stacks) {
+			a_actor->RemoveItem(obj, count, RE::ITEM_REMOVE_REASON::kStoreInContainer, nullptr, a_to);
+		}
+		return stacks.size();
+	}
+
 	void GiveQuestItemsLater(RE::FormID a_actorID)
 	{
 		const std::uint32_t gen = g_generation.load();
@@ -333,31 +381,11 @@ namespace
 			task->AddTask([a_actorID, gen]() {
 				if (g_generation.load() != gen) return;   // a save was loaded meanwhile
 				auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_actorID);
-				auto* player = RE::PlayerCharacter::GetSingleton();
-				if (!actor || !player) {
+				if (!actor) {
 					logger::warn("Quest items: body {:08X} is gone - nothing handed over", a_actorID);
 					return;
 				}
-				std::vector<RE::TESBoundObject*> stuck;
-				std::int32_t moved = 0;
-				for (int guard = 0; guard < 256; ++guard) {
-					const auto moves = CollectItems(actor, true);
-					const auto it = std::find_if(moves.begin(), moves.end(), [&](const ItemMove& a_m) {
-						return std::find(stuck.begin(), stuck.end(), a_m.obj) == stuck.end();
-					});
-					if (it == moves.end()) break;
-					const std::int32_t before = CountOf(actor, it->obj);
-					actor->RemoveItem(it->obj, it->count, RE::ITEM_REMOVE_REASON::kStoreInContainer, it->xList, player);
-					if (CountOf(actor, it->obj) < before) {
-						++moved;
-					} else {
-						stuck.push_back(it->obj);   // could not be moved; don't try it again
-					}
-				}
-				logger::info("Quest items: moved {} stacks from {:08X} to the player ({} refused)", moved, a_actorID, stuck.size());
-				if (moved > 0) {
-					RE::DebugNotification("You took the quest items they carried.");
-				}
+				MoveQuestItemsToPlayer(actor);
 			});
 		}).detach();
 	}
@@ -441,20 +469,8 @@ namespace
 					logger::warn("Remains: body {:08X} or container {:08X} is gone - nothing moved", a_actorID, a_remainsID);
 					return;
 				}
-				std::vector<std::pair<RE::TESBoundObject*, std::int32_t>> stacks;
-				for (const auto& m : CollectItems(actor, false)) {
-					auto it = std::find_if(stacks.begin(), stacks.end(),
-						[&](const auto& s) { return s.first == m.obj; });
-					if (it == stacks.end()) {
-						stacks.emplace_back(m.obj, m.count);
-					} else {
-						it->second += m.count;
-					}
-				}
-				for (const auto& [obj, count] : stacks) {
-					actor->RemoveItem(obj, count, RE::ITEM_REMOVE_REASON::kStoreInContainer, nullptr, remains);
-				}
-				logger::info("Remains: moved {} item types from {:08X} into {:08X}", stacks.size(), a_actorID, a_remainsID);
+				const std::size_t types = MoveAllItems(actor, remains);
+				logger::info("Remains: moved {} item types from {:08X} into {:08X}", types, a_actorID, a_remainsID);
 			});
 		}).detach();
 	}
@@ -1152,6 +1168,69 @@ namespace RespectManager
 	bool IsUrnRef(RE::TESObjectREFR* a_ref)
 	{
 		return IsUrn(a_ref);
+	}
+
+	bool PickUpAshPile(RE::FormID a_refID)
+	{
+		auto* pile = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_refID);
+		if (!IsAshPile(pile)) return false;
+		if (!PFR::Settings::GetSingleton().collectEnabled.load()) return true;
+		auto* marker = PickupManager::GetHoldingMarker();
+		if (!g_remainsUrn || !marker) {
+			RE::DebugNotification("Picking up ashes needs BuryTakeBodies.esp enabled.");
+			return true;
+		}
+		if (!PickupManager::HasFreeSlot()) {
+			RE::DebugNotification("You can't carry any more.");
+			return true;
+		}
+		RE::NiPointer<RE::TESObjectREFR> urn = marker->PlaceObjectAtMe(g_remainsUrn, true);
+		if (!urn) return true;
+		auto* actor = AshPileActor(pile);
+		std::string name = DeadNameOf(actor ? static_cast<RE::TESObjectREFR*>(actor) : pile);
+		urn->SetDisplayName(RE::BSFixedString("Ashes of " + (name.empty() ? std::string("the fallen") : name)), true);
+		MakeUrnSmall(urn.get());
+		const RE::FormID urnID = urn->GetFormID();
+
+		// The pile (and any twin of it) leaves like a buried one; the actor behind it too.
+		const auto twins = actor ? FindTwinAshPiles(pile, actor) : std::vector<RE::NiPointer<RE::TESObjectREFR>>{};
+		pile->SetActivationBlocked(false);
+		if (g_cleanupCell) {
+			MoveRefTo(pile, g_cleanupCell, RE::NiPoint3{ 0.0f, 0.0f, 0.0f }, pile->GetAngle());
+		}
+		pile->Disable();
+		SendTwinsAway(twins);
+		PlayTurnUndeadSound();
+		if (!actor) {
+			PickupManager::ExecuteCollect(urnID);
+			logger::info("Pick Up: ash pile {:08X} (no actor) taken as urn {:08X}", a_refID, urnID);
+			return true;
+		}
+		SendAshActorAway(actor);
+
+		// Half a second later, with the actor gone from the loaded area: quest items
+		// to the player, everything else into the urn, then the urn into the inventory.
+		const RE::FormID actorID = actor->GetFormID();
+		const std::uint32_t gen = g_generation.load();
+		std::thread([actorID, urnID, gen]() {
+			std::this_thread::sleep_for(std::chrono::milliseconds(500));
+			if (auto* task = SKSE::GetTaskInterface()) {
+				task->AddTask([actorID, urnID, gen]() {
+					if (g_generation.load() != gen) return;
+					auto* a = RE::TESForm::LookupByID<RE::Actor>(actorID);
+					auto* u = RE::TESForm::LookupByID<RE::TESObjectREFR>(urnID);
+					if (!u) return;
+					std::size_t types = 0;
+					if (a) {
+						MoveQuestItemsToPlayer(a);
+						types = MoveAllItems(a, u);
+					}
+					PickupManager::ExecuteCollect(urnID);
+					logger::info("Pick Up: ashes of {:08X} gathered into urn {:08X} ({} item types) and carried", actorID, urnID, types);
+				});
+			}
+		}).detach();
+		return true;
 	}
 
 	// Public wrapper for the crosshair sink; the test itself lives in the

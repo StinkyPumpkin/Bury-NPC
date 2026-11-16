@@ -439,6 +439,12 @@ namespace PickupManager
 		return body;
 	}
 
+	bool HasFreeSlot()
+	{
+		std::scoped_lock lk(g_mutex);
+		return std::any_of(g_slots.begin(), g_slots.end(), [](const auto& s) { return !s.occupied && s.misc; });
+	}
+
 	void ExecuteCollect(RE::FormID a_refID)
 	{
 		if (!PFR::Settings::GetSingleton().collectEnabled.load()) return;
