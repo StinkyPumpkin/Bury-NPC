@@ -32,8 +32,15 @@ namespace
 	RE::TESObjectCONT*          g_remainsUrn = nullptr;
 	// "Ashes" jar item (0x838, same canopic jar model): what an emptied urn becomes.
 	RE::TESObjectMISC*          g_ashesJar = nullptr;
-	// Dead draugr (0x839, PFR_RemainsDraugr) a buried corpse is dug up as.
+	// The same "Remains" container for a woman (0x83B): its base object is how
+	// Dig Up knows to raise the female draugr, with no extra save data.
+	RE::TESObjectCONT*          g_remainsF = nullptr;
+	// Dead draugr a buried corpse is dug up as, on the plain draugr body (no
+	// armor): 0x839 PFR_RemainsDraugr (male), 0x83A PFR_RemainsDraugrF (female).
 	RE::TESNPC*                 g_remainsDraugr = nullptr;
+	RE::TESNPC*                 g_remainsDraugrF = nullptr;
+	// Only people (ActorTypeNPC, Skyrim.esm 0x13794) keep their belongings in the grave.
+	RE::BGSKeyword*             g_actorTypeNPC = nullptr;
 
 	// Bumped on every new game / load. Work that waits (the dig animation, the
 	// bury-box check) holds FormIDs from the game it started in; a temporary ID
@@ -160,7 +167,8 @@ namespace
 	bool IsRemainsDraugr(RE::TESObjectREFR* a_ref)
 	{
 		auto* actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
-		return actor && g_remainsDraugr && actor->GetActorBase() == g_remainsDraugr;
+		auto* base = actor ? actor->GetActorBase() : nullptr;
+		return base && ((g_remainsDraugr && base == g_remainsDraugr) || (g_remainsDraugrF && base == g_remainsDraugrF));
 	}
 
 	// The dead person's own display name. A raised draugr is called "Remains of
@@ -329,16 +337,27 @@ namespace
 	// a "Remains" container parked in our holding cell, linked to the grave, and
 	// Dig Up brings it back. The NPC itself is removed as before.
 	// Someone buried as an ash pile comes back up as a burial urn of their ashes.
-	RE::TESObjectCONT* RemainsBase(bool a_ashes)
+	RE::TESObjectCONT* RemainsBase(bool a_ashes, bool a_female)
 	{
-		return (a_ashes && g_remainsUrn) ? g_remainsUrn : g_remains;
+		if (a_ashes && g_remainsUrn) return g_remainsUrn;
+		return (a_female && g_remainsF) ? g_remainsF : g_remains;
 	}
 
-	// A unique NPC who still carries something: their grave will hold Remains.
+	bool IsFemale(RE::Actor* a_actor)
+	{
+		auto* npc = a_actor ? a_actor->GetActorBase() : nullptr;
+		return npc && npc->GetSex() == RE::SEX::kFemale;
+	}
+
+	// A unique PERSON who still carries something: their grave will hold Remains.
+	// Creatures (a unique horse, spider or dragon with its death loot) do not:
+	// their loot leaves with the body like any other corpse's. A raised draugr
+	// ("Remains of <Name>") is a person here too, so it can be buried again.
 	bool WillKeepRemains(RE::Actor* a_actor, bool a_ashes)
 	{
 		auto* npc = a_actor ? a_actor->GetActorBase() : nullptr;
-		return npc && npc->IsUnique() && RemainsBase(a_ashes) && PickupManager::GetHoldingMarker() &&
+		const bool person = IsRemainsDraugr(a_actor) || (g_actorTypeNPC && a_actor->HasKeyword(g_actorTypeNPC));
+		return npc && npc->IsUnique() && person && RemainsBase(a_ashes, false) && PickupManager::GetHoldingMarker() &&
 		       !CollectItems(a_actor, false).empty();
 	}
 
@@ -346,7 +365,7 @@ namespace
 	RE::FormID CreateRemains(RE::TESObjectREFR* a_grave, RE::Actor* a_actor, bool a_ashes)
 	{
 		auto* marker = PickupManager::GetHoldingMarker();
-		auto* base = RemainsBase(a_ashes);
+		auto* base = RemainsBase(a_ashes, IsFemale(a_actor));
 		if (!a_grave || !WillKeepRemains(a_actor, a_ashes)) return 0;
 
 		RE::NiPointer<RE::TESObjectREFR> remains = marker->PlaceObjectAtMe(base, true);
@@ -862,8 +881,11 @@ namespace
 	// move from the hidden Remains container (nothing worn) into a fresh corpse.
 	bool RaiseRemainsDraugr(RE::TESObjectREFR* a_remains, RE::TESObjectREFR* a_grave)
 	{
-		if (!g_remainsDraugr || !a_remains || !a_grave) return false;
-		RE::NiPointer<RE::TESObjectREFR> ref = a_grave->PlaceObjectAtMe(g_remainsDraugr, true);
+		if (!a_remains || !a_grave) return false;
+		const bool female = g_remainsF && a_remains->GetBaseObject() == g_remainsF;
+		RE::TESNPC* base = (female && g_remainsDraugrF) ? g_remainsDraugrF : g_remainsDraugr;
+		if (!base) return false;
+		RE::NiPointer<RE::TESObjectREFR> ref = a_grave->PlaceObjectAtMe(base, true);
 		auto* draugr = ref ? ref->As<RE::Actor>() : nullptr;
 		if (!draugr) return false;
 
@@ -885,8 +907,8 @@ namespace
 		}
 		a_remains->Disable();
 		a_remains->SetDelete(true);
-		logger::info("Dig Up: remains {:08X} raised as dead draugr {:08X} ({} item types)",
-			a_remains->GetFormID(), draugr->GetFormID(), stacks.size());
+		logger::info("Dig Up: remains {:08X} raised as dead {} draugr {:08X} ({} item types)",
+			a_remains->GetFormID(), female ? "female" : "male", draugr->GetFormID(), stacks.size());
 		return true;
 	}
 
@@ -977,15 +999,18 @@ namespace RespectManager
 			g_remainsUrn = dh->LookupForm<RE::TESObjectCONT>(0x000837, "BuryTakeBodies.esp");
 			g_ashesJar = dh->LookupForm<RE::TESObjectMISC>(0x000838, "BuryTakeBodies.esp");
 			g_remainsDraugr = dh->LookupForm<RE::TESNPC>(0x000839, "BuryTakeBodies.esp");
+			g_remainsDraugrF = dh->LookupForm<RE::TESNPC>(0x00083A, "BuryTakeBodies.esp");
+			g_remainsF = dh->LookupForm<RE::TESObjectCONT>(0x00083B, "BuryTakeBodies.esp");
 		}
+		g_actorTypeNPC = RE::TESForm::LookupByID<RE::BGSKeyword>(0x00013794);
 
 		BuryDialogSink::GetSingleton().Register();
 		UrnSink::GetSingleton().Register();
 
-		logger::info("RespectManager: cleanupCell={} sound={} graveActivator={} remains={} urn={} jar={} draugr={} UIExtensions={}",
+		logger::info("RespectManager: cleanupCell={} sound={} graveActivator={} remains={}/{} urn={} jar={} draugr={}/{} ActorTypeNPC={} UIExtensions={}",
 			g_cleanupCell != nullptr, g_soundForm != nullptr, g_graveActivator != nullptr,
-			g_remains != nullptr, g_remainsUrn != nullptr, g_ashesJar != nullptr, g_remainsDraugr != nullptr,
-			g_hasUIExtensions);
+			g_remains != nullptr, g_remainsF != nullptr, g_remainsUrn != nullptr, g_ashesJar != nullptr,
+			g_remainsDraugr != nullptr, g_remainsDraugrF != nullptr, g_actorTypeNPC != nullptr, g_hasUIExtensions);
 
 		if (!g_graveActivator) {
 			logger::warn("RespectManager: BuryTakeBodies.esp grave activator not found — "

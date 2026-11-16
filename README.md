@@ -21,9 +21,11 @@ so a corpse behaves exactly as before until you ask for more.
   leave the body untouched. The text box uses **UIExtensions**; without it (or if
   the box fails to open) the grave is placed with the name only. The headstone
   stands upright on the ground, turned toward you.
-  - A **unique NPC** keeps their belongings: everything they carried goes into
+  - A **unique NPC** (a person, not a creature) keeps their belongings:
+    everything they carried goes into
     their grave, and the grave's prompt reads **Dig Up** (Shift, hold E, needs a
-    shovel). Digging brings up their remains: a dead draugr called
+    shovel). Digging brings up their remains: a dead draugr (the plain draugr
+    body, male or female like the dead) called
     "Remains of <Name>" carrying everything they were buried with, lying in
     front of the grave with full ragdoll physics. Loot it like any body, carry
     it with Take Body, or Bury it again (a grave that can be dug up once more).
@@ -33,7 +35,9 @@ so a corpse behaves exactly as before until you ask for more.
     emptied it, the urn becomes a jar of their ashes, "Ashes of <Name>", an
     item you can pick up, carry home and set on a shelf.
   - Graves are permanent: they stay where you dug them.
-  - Anyone else: quest items come to you first, the rest goes with the body.
+  - Anyone else, and every creature (even a unique horse or dragon): quest items
+    come to you first, the rest goes with the body. Loot first if you want the
+    hide or the bones.
 - **Shift + E, tap → Resurrect** — brings the actor back (`resurrectResetInventory`
   decides whether they come back re-equipped or keep the looted inventory).
   Not offered on ash piles.
@@ -69,8 +73,8 @@ takes an item; it returns the moment you release Shift or look away.
 - **BuryTakeBodies.esp** — ships in this mod folder. ESL-flagged (header 1.70, so
   no BEES needed on older games), holding 50 corpse-token MiscObjects, a hidden
   holding cell (pick-up), the grave activator, the dig furniture and the
-  "Remains" and "Burial Urn" containers, the "Ashes" jar and the "Remains"
-  draugr. **Enable it in your plugin list** or both Pick Up and Bury
+  "Remains" (male and female) and "Burial Urn" containers, the "Ashes" jar and
+  the male and female "Remains" draugr. **Enable it in your plugin list** or both Pick Up and Bury
   stay disabled (Lay to Rest still works without it). No other plugins needed —
   Pay Your Respects is **not** required.
 - Disable the original *Press F To Pay Respects* AND *Collect Bodies* — this
