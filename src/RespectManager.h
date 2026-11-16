@@ -36,11 +36,10 @@ namespace RespectManager
 	// <Name>", with what they carried; quest items go to the player) and the urn
 	// is carried like a body. False when the ref is not an ash pile.
 	bool PickUpAshPile(RE::FormID a_refID);
-	// Put a carried urn down on a_spot (the dropped token once it has landed).
-	void SetUrnDown(RE::FormID a_urnID, RE::TESObjectREFR* a_spot);
-	// After a drop: wait until the dropped token stops moving, then SetUrnDown on
-	// it and remove the token.
-	void SetUrnDownWhenSettled(RE::FormID a_urnID, RE::FormID a_tokenID);
+	// Put a carried urn down after its token was dropped: on the ground in front
+	// of the player's feet (the dropped token is no guide - it can hang in the air
+	// or sink into the terrain).
+	void SetUrnDownBeforePlayer(RE::FormID a_urnID);
 
 	// Bring a dead actor back to life (RE::Actor::Resurrect).
 	void ExecuteResurrect(RE::FormID a_refID);

@@ -1034,38 +1034,6 @@ namespace
 	// in game: SetMotionType(dynamic) and ApplyHavokImpulse left it in place),
 	// so it has to be set down exactly where it should stand.
 	// ------------------------------------------------------------------
-	// After a drop: watch the dropped token every 200 ms until it has stopped moving
-	// (two still readings, at most ~3 s), then set the urn down there and remove the
-	// token. Each step is a new thread that queues one task - never a task re-queued
-	// from inside a task.
-	void PollTokenThenSetDown(RE::FormID a_urnID, RE::FormID a_tokenID, RE::NiPoint3 a_last, int a_still, int a_try)
-	{
-		const std::uint32_t gen = g_generation.load();
-		std::thread([a_urnID, a_tokenID, a_last, a_still, a_try, gen]() {
-			std::this_thread::sleep_for(std::chrono::milliseconds(200));
-			if (auto* task = SKSE::GetTaskInterface()) {
-				task->AddTask([a_urnID, a_tokenID, a_last, a_still, a_try, gen]() {
-					if (g_generation.load() != gen) return;
-					auto* token = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_tokenID);
-					if (!token || token->IsDisabled()) {   // the token is gone: the urn comes down at the player
-						auto* urn = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_urnID);
-						auto* player = RE::PlayerCharacter::GetSingleton();
-						if (urn && player) urn->MoveTo(player);
-						return;
-					}
-					const RE::NiPoint3 pos = token->GetPosition();
-					const int still = (pos - a_last).Length() < 0.5f ? a_still + 1 : 0;
-					if (still >= 2 || a_try >= 15) {
-						RespectManager::SetUrnDown(a_urnID, token);
-						token->Disable();
-						token->SetDelete(true);
-						return;
-					}
-					PollTokenThenSetDown(a_urnID, a_tokenID, pos, still, a_try + 1);
-				});
-			}
-		}).detach();
-	}
 
 	// Where dug-up remains come to rest: on the ground in front of the grave,
 	// toward the player (on the grave's own spot they would sit inside the
@@ -1213,29 +1181,32 @@ namespace RespectManager
 		return IsUrn(a_ref);
 	}
 
-	void SetUrnDown(RE::FormID a_urnID, RE::TESObjectREFR* a_spot)
+	void SetUrnDownBeforePlayer(RE::FormID a_urnID)
 	{
+		constexpr float kAhead = 60.0f;
 		auto* urn = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_urnID);
-		if (!IsUrn(urn) || !a_spot) return;
-		RE::NiPoint3 pos = a_spot->GetPosition();
-		// Outdoors the dropped token can sink into the terrain (seen: 30 units under
-		// it, the urn ended up buried): never below the ground. A token resting on a
-		// rock or a table above the terrain keeps its own height.
-		if (auto* cell = a_spot->GetParentCell(); cell && !cell->IsInteriorCell()) {
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!IsUrn(urn) || !player) return;
+		// The dropped token is no guide: it can hang in the air for a while after a
+		// drop (seen: still at 100 units up after 0.6 s) or sink into the terrain
+		// (seen: 30 units under it). The player's feet always stand on something,
+		// so the urn goes in front of them, at their height - outdoors on the
+		// terrain when that is close to it (a slope).
+		const float h = player->GetAngleZ();
+		RE::NiPoint3 pos = player->GetPosition();
+		pos.x += std::sin(h) * kAhead;
+		pos.y += std::cos(h) * kAhead;
+		if (auto* cell = player->GetParentCell(); cell && !cell->IsInteriorCell()) {
 			float land = 0.0f;
-			if (auto* tes = RE::TES::GetSingleton(); tes && tes->GetLandHeight(pos, land) && land > pos.z) {
+			if (auto* tes = RE::TES::GetSingleton(); tes && tes->GetLandHeight(pos, land) &&
+				std::abs(land - pos.z) < 40.0f) {
 				pos.z = land;
 			}
 		}
 		pos.z += 6.0f;   // the half-size jar's origin is its centre (5 above its base)
 		MakeUrnSmall(urn);   // still unloaded in the holding cell
-		MoveRefTo(urn, a_spot->GetParentCell(), a_spot->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, a_spot->GetAngleZ() });
-		logger::info("Urn {:08X} set down at {:.0f} {:.0f} {:.0f}", a_urnID, pos.x, pos.y, pos.z);
-	}
-
-	void SetUrnDownWhenSettled(RE::FormID a_urnID, RE::FormID a_tokenID)
-	{
-		PollTokenThenSetDown(a_urnID, a_tokenID, RE::NiPoint3{ 1.0e9f, 1.0e9f, 1.0e9f }, 0, 0);
+		MoveRefTo(urn, player->GetParentCell(), player->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, h });
+		logger::info("Urn {:08X} set down before the player at {:.0f} {:.0f} {:.0f}", a_urnID, pos.x, pos.y, pos.z);
 	}
 
 	bool PickUpAshPile(RE::FormID a_refID)

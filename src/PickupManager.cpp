@@ -123,11 +123,15 @@ namespace
 		}
 
 		auto* body = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_bodyID);
-		if (body && token && RespectManager::IsUrnRef(body)) {
-			// The token appears in the air in front of the player and falls; a body
-			// ragdolls down from there, but an urn (a container: no physics) would stay
-			// where it appeared. The urn is set down once the token has stopped moving.
-			RespectManager::SetUrnDownWhenSettled(a_bodyID, token->GetFormID());
+		if (body && RespectManager::IsUrnRef(body)) {
+			// A body ragdolls down from the dropped token's spot, but an urn (a
+			// container: no physics) would stay wherever the token was. It goes on the
+			// ground in front of the player instead.
+			RespectManager::SetUrnDownBeforePlayer(a_bodyID);
+			if (token) {
+				token->Disable();
+				token->SetDelete(true);
+			}
 		} else {
 			if (body) {
 				if (token) {
