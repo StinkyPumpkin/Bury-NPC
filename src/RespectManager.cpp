@@ -83,6 +83,20 @@ namespace
 		MoveRefTo(a_ref, a_targetCell, nullptr, a_position, a_rotation);
 	}
 
+	// Height to set an object down at, outdoors. GetLandHeight reads the terrain heightmap only:
+	// a road, floor or bridge mesh laid over it (Riverwood's cobbled street: terrain 68 units
+	// under the road) is not part of it. The terrain is used only when it is at most 12 units
+	// below the object (resting on it) or up to a_maxAbove above it (sunk into it); otherwise
+	// the object rests on something over the terrain and keeps its own height.
+	float GroundZ(RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_pos, float a_maxAbove = 80.0f)
+	{
+		if (!a_cell || a_cell->IsInteriorCell()) return a_pos.z;
+		float land = 0.0f;
+		auto* tes = RE::TES::GetSingleton();
+		if (!tes || !tes->GetLandHeight(a_pos, land)) return a_pos.z;
+		return (land >= a_pos.z - 12.0f && land <= a_pos.z + a_maxAbove) ? land : a_pos.z;
+	}
+
 	// Stand a freshly placed grave upright on the ground. PlaceObjectAtMe copied the
 	// corpse's rotation, and a ragdoll's X/Y rotation can be anything, so on rough
 	// ground the headstone came out tilted or upside down. Keep only a heading
@@ -100,15 +114,7 @@ namespace
 			}
 		}
 
-		// Terrain height only in exteriors; skip it when the body lies well above or
-		// below the terrain (a rock, a bridge, a cave mouth) so the grave isn't sunk.
-		if (auto* cell = a_body->GetParentCell(); cell && !cell->IsInteriorCell()) {
-			float land = 0.0f;
-			if (auto* tes = RE::TES::GetSingleton(); tes && tes->GetLandHeight(pos, land) &&
-				std::abs(land - pos.z) < 80.0f) {
-				pos.z = land;
-			}
-		}
+		pos.z = GroundZ(a_body->GetParentCell(), pos);
 
 		MoveRefTo(a_grave, a_grave->GetParentCell(), a_grave->GetWorldspace(),
 			pos, RE::NiPoint3{ 0.0f, 0.0f, heading });
@@ -146,11 +152,7 @@ namespace
 			if (moved) pos.z = p.z;   // moved out to the player's level
 		}
 		if (auto* cell = a_urn->GetParentCell(); cell && !cell->IsInteriorCell()) {
-			float land = 0.0f;
-			if (auto* tes = RE::TES::GetSingleton(); tes && tes->GetLandHeight(pos, land) &&
-				std::abs(land - pos.z) < 120.0f) {
-				pos.z = land;
-			}
+			pos.z = GroundZ(cell, pos, 120.0f);
 		} else if (player && !moved) {
 			// Indoors there is no terrain to read: an urn still in the air goes down to
 			// the player's floor.
@@ -1052,13 +1054,7 @@ namespace
 				a_heading = std::atan2(d.x, d.y);
 			}
 		}
-		if (auto* cell = a_grave->GetParentCell(); cell && !cell->IsInteriorCell()) {
-			float land = 0.0f;
-			if (auto* tes = RE::TES::GetSingleton(); tes && tes->GetLandHeight(pos, land) &&
-				std::abs(land - pos.z) < 80.0f) {
-				pos.z = land;
-			}
-		}
+		pos.z = GroundZ(a_grave->GetParentCell(), pos);
 		return pos;
 	}
 
@@ -1197,13 +1193,7 @@ namespace RespectManager
 		RE::NiPoint3 pos = player->GetPosition();
 		pos.x += std::sin(h) * kAhead;
 		pos.y += std::cos(h) * kAhead;
-		if (auto* cell = player->GetParentCell(); cell && !cell->IsInteriorCell()) {
-			float land = 0.0f;
-			if (auto* tes = RE::TES::GetSingleton(); tes && tes->GetLandHeight(pos, land) &&
-				std::abs(land - pos.z) < 40.0f) {
-				pos.z = land;
-			}
-		}
+		pos.z = GroundZ(player->GetParentCell(), pos, 40.0f);
 		pos.z += 6.0f;   // the half-size jar's origin is its centre (5 above its base)
 		MoveRefTo(urn, player->GetParentCell(), player->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, h });
 		logger::info("Urn {:08X} set down before the player at {:.0f} {:.0f} {:.0f}", a_urnID, pos.x, pos.y, pos.z);
