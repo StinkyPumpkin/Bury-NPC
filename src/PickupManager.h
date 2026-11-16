@@ -21,7 +21,7 @@ namespace PickupManager
 	// The persistent marker in our holding cell (BuryTakeBodies.esp 0x801), or null.
 	RE::TESObjectREFR* GetHoldingMarker();
 
-	// Buried unique NPCs: the body waits in the holding cell and can be dug up
+	// Buried people: their remains wait in the holding cell and can be dug up
 	// from its grave. Saved in the cosave with the carried bodies.
 	void RegisterBuriedBody(RE::FormID a_graveID, RE::FormID a_bodyID);
 	bool HasBuriedBody(RE::FormID a_graveID);

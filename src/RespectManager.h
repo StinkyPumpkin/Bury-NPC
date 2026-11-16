@@ -48,10 +48,10 @@ namespace RespectManager
 	// activator).  Used to show the Destroy Grave prompt only on our graves.
 	bool IsOurGrave(RE::TESObjectREFR* a_ref);
 
-	// Remove a gravestone this mod placed. A grave holding a unique NPC's
+	// Remove a gravestone this mod placed. A grave holding a person's
 	// remains is dug up instead: the remains come back at the grave.
 	void DestroyGrave(RE::FormID a_graveID);
-	// True when the grave holds a unique NPC's remains (the prompt then reads Dig Up).
+	// True when the grave holds a person's remains (the prompt then reads Dig Up).
 	bool GraveHasRemains(RE::FormID a_graveID);
 	// Re-open the epitaph box on one of our graves, filled with its current
 	// epitaph; confirming re-engraves it (empty = "Here lies <Name>").

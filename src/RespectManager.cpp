@@ -24,7 +24,7 @@ namespace
 	// Our menu-less isSmelter "dig" furniture (BuryTakeBodies.esp 0x835).
 	RE::TESFurniture*           g_animFurniture = nullptr;
 
-	// "Remains" container (BuryTakeBodies.esp 0x836): a buried unique NPC's
+	// "Remains" container (BuryTakeBodies.esp 0x836): a buried person's
 	// inventory waits in one of these in the holding cell until it is dug up.
 	RE::TESObjectCONT*          g_remains = nullptr;
 	// "Burial Urn" container (0x837, the vanilla Nordic canopic jar model):
@@ -448,7 +448,7 @@ namespace
 	// Place the inscribed gravestone at the body and remove the body.  Runs on
 	// the main thread via the task queue.
 	// ------------------------------------------------------------------
-	// A buried unique NPC keeps their belongings: everything they carried goes into
+	// A buried person keeps their belongings: everything they carried goes into
 	// a "Remains" container parked in our holding cell, linked to the grave, and
 	// Dig Up brings it back. The NPC itself is removed as before.
 	// Someone buried as an ash pile comes back up as a burial urn of their ashes.
@@ -464,19 +464,20 @@ namespace
 		return npc && npc->GetSex() == RE::SEX::kFemale;
 	}
 
-	// A unique PERSON who still carries something: their grave will hold Remains.
-	// Creatures (a unique horse, spider or dragon with its death loot) do not:
-	// their loot leaves with the body like any other corpse's. A raised draugr
-	// ("Remains of <Name>") is a person here too, so it can be buried again.
+	// Any PERSON who still carries something: their grave will hold Remains (the
+	// draugr / urn is generic, only the item list is kept). Creatures (a horse,
+	// spider or dragon with its death loot) do not: their loot leaves with the
+	// body. A raised draugr ("Remains of <Name>") is a person here too, so it can
+	// be buried again.
 	bool WillKeepRemains(RE::Actor* a_actor, bool a_ashes)
 	{
 		auto* npc = a_actor ? a_actor->GetActorBase() : nullptr;
 		const bool person = IsRemainsDraugr(a_actor) || (g_actorTypeNPC && a_actor->HasKeyword(g_actorTypeNPC));
-		return npc && npc->IsUnique() && person && RemainsBase(a_ashes, false) && PickupManager::GetHoldingMarker() &&
+		return npc && person && RemainsBase(a_ashes, false) && PickupManager::GetHoldingMarker() &&
 		       !CollectItems(a_actor, false).empty();
 	}
 
-	// Returns the container's FormID, or 0 when the body is not a unique NPC.
+	// Returns the container's FormID, or 0 when the body is not a person with belongings.
 	RE::FormID CreateRemains(RE::TESObjectREFR* a_grave, RE::Actor* a_actor, bool a_ashes)
 	{
 		auto* marker = PickupManager::GetHoldingMarker();
@@ -1120,7 +1121,7 @@ namespace RespectManager
 			g_shovel2 = dh->LookupForm<RE::TESObjectMISC>(0x00F5D06, "Skyrim.esm");
 			// Our dig-animation furniture.
 			g_animFurniture = dh->LookupForm<RE::TESFurniture>(0x000835, "BuryTakeBodies.esp");
-			// Container for a buried unique NPC's belongings.
+			// Container for a buried person's belongings.
 			g_remains = dh->LookupForm<RE::TESObjectCONT>(0x000836, "BuryTakeBodies.esp");
 			g_remainsUrn = dh->LookupForm<RE::TESObjectCONT>(0x000837, "BuryTakeBodies.esp");
 			g_remainsDraugr = dh->LookupForm<RE::TESNPC>(0x000839, "BuryTakeBodies.esp");
@@ -1204,7 +1205,6 @@ namespace RespectManager
 			}
 		}
 		pos.z += 6.0f;   // the half-size jar's origin is its centre (5 above its base)
-		MakeUrnSmall(urn);   // still unloaded in the holding cell
 		MoveRefTo(urn, player->GetParentCell(), player->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, h });
 		logger::info("Urn {:08X} set down before the player at {:.0f} {:.0f} {:.0f}", a_urnID, pos.x, pos.y, pos.z);
 	}
@@ -1461,7 +1461,7 @@ namespace RespectManager
 		auto* grave = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_graveID);
 		if (!grave || grave->GetBaseObject() != g_graveActivator) return;  // only our graves
 
-		// A unique NPC's grave: dig up their remains (a lootable container with
+		// A person's grave: dig up their remains (a lootable container with
 		// everything they carried) instead of just removing the headstone.
 		if (PickupManager::HasBuriedBody(a_graveID)) {
 			if (PFR::Settings::GetSingleton().buryRequiresShovel.load() && !PlayerHasShovel()) {
@@ -1479,7 +1479,6 @@ namespace RespectManager
 						// The canopic jar's origin is its centre (bounds z -10..10, half size
 						// here); +8 looked right in game.
 						pos.z += 8.0f;
-						MakeUrnSmall(remains);   // still unloaded in the holding cell
 						MoveRefTo(remains, g->GetParentCell(), g->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, heading });
 						RE::DebugNotification("You dig up a burial urn.");
 						logger::info("Dig Up: urn {:08X} set down at grave {:08X}", remainsID, g->GetFormID());

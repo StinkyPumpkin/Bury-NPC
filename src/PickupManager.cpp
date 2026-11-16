@@ -34,7 +34,7 @@ namespace
 
 	constexpr std::uint32_t kCosaveID   = 'PFRC';
 	constexpr std::uint32_t kRecordType = 'CRPS';
-	constexpr std::uint32_t kGraveRecord = 'GRVS';   // grave -> buried unique body
+	constexpr std::uint32_t kGraveRecord = 'GRVS';   // grave -> buried person's remains
 	constexpr std::uint32_t kVersion    = 1;
 
 	struct Slot
@@ -55,7 +55,7 @@ namespace
 	RE::BGSKeyword*     g_actorTypeNPC = nullptr;
 	std::recursive_mutex g_mutex;
 
-	// Graves that hold a buried unique NPC (grave ref -> body ref).
+	// Graves that hold a buried person's remains (grave ref -> body ref).
 	std::unordered_map<RE::FormID, RE::FormID> g_buried;
 
 	void ClearAllSlots()

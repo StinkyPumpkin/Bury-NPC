@@ -413,7 +413,7 @@ namespace
 		if (graveID == 0) return;
 		auto& s = PFR::Settings::GetSingleton();
 		// graveDestroyEnabled = false hides Destroy Grave, but a grave holding a
-		// unique NPC's remains can still be dug up - otherwise their things are lost.
+		// person's remains can still be dug up - otherwise their things are lost.
 		const bool hasRemains = RespectManager::GraveHasRemains(graveID);
 		const bool destroy = s.graveDestroyEnabled.load() || hasRemains;
 		// Edit Epitaph is on the Lay key; both its keys at -1 switch it off.
@@ -423,7 +423,7 @@ namespace
 		// screen / off the left edge).  With 0 it renders at the theme's fixed
 		// centre.  We track the target grave in g_currentGraveID, not refid.
 		g_graveSink.m_prompt.refid = 0;
-		// A grave holding a unique NPC's remains is dug up instead of destroyed.
+		// A grave holding a person's remains is dug up instead of destroyed.
 		g_graveSink.m_prompt.text = hasRemains ? "Dig Up" : "Destroy Grave";
 		g_graveSink.BuildVisible(epitaph, destroy);
 		if (g_graveSink.m_count.load() == 0) return;

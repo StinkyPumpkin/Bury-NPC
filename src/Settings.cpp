@@ -95,7 +95,7 @@ useDisplayName = true
 ; Destroy a grave you placed: look at it, HOLD the modifier (reveal), then HOLD
 ; the key to dig it out. Hidden until you hold the modifier so the epitaph
 ; stays clean. DX scancodes: LShift = 42, E = 18. Only affects this mod's graves.
-; A buried UNIQUE NPC's grave reads "Dig Up" instead: everything they carried was
+; A buried PERSON's grave reads "Dig Up" instead: everything they carried was
 ; kept, and digging brings up their remains to loot (needs a shovel like Bury).
 ; graveDestroyEnabled = false hides Destroy Grave only; Dig Up stays available.
 graveDestroyEnabled = true

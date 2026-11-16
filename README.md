@@ -21,7 +21,7 @@ so a corpse behaves exactly as before until you ask for more.
   leave the body untouched. The text box uses **UIExtensions**; without it (or if
   the box fails to open) the grave is placed with the name only. The headstone
   stands upright on the ground, turned toward you.
-  - A **unique NPC** (a person, not a creature) keeps their belongings:
+  - A **person** (not a creature) keeps their belongings, quest items too:
     everything they carried goes into
     their grave, and the grave's prompt reads **Dig Up** (Shift, hold E, needs a
     shovel). Digging brings up their remains: a dead draugr (the plain draugr
@@ -37,9 +37,9 @@ so a corpse behaves exactly as before until you ask for more.
     hold F). It stays an urn when empty. It has no physics (the game keeps
     containers fixed): it stands where it is set down.
   - Graves are permanent: they stay where you dug them.
-  - Anyone else, and every creature (even a unique horse or dragon): quest items
-    come to you first, the rest goes with the body. Loot first if you want the
-    hide or the bones.
+  - A creature (even a unique horse or dragon): quest items come to you, the
+    rest goes with the body. Loot first if you want the hide or the bones.
+  - Lay to Rest leaves no grave: quest items always come to you.
 - **Shift + E, tap → Resurrect** — brings the actor back (`resurrectResetInventory`
   decides whether they come back re-equipped or keep the looted inventory).
   Not offered on ash piles.
