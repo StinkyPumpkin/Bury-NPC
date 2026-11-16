@@ -857,9 +857,15 @@ namespace
 					SKSE::GetTaskInterface()->AddUITask([deadName, edit, prefill]() { AddEpitaphTip(deadName, edit, prefill); });
 				}
 			} else if (a_event->eventName == "UITextEntryMenu_TextChanged") {
+				// The box's Cancel sends this too, with EMPTY text (its Accept never sends
+				// empty text): that is a cancel, the body stays. A blank epitaph arrives as
+				// whitespace (see ConfirmEmptyEpitaphIfBlank) and is trimmed away.
+				std::string msg = a_event->strArg.c_str();
 				std::scoped_lock lk(g_buryMutex);
-				if (g_burying) {
-					g_buryMessage = a_event->strArg.c_str();
+				if (g_burying && !msg.empty()) {
+					const auto first = msg.find_first_not_of(" \t\r\n");
+					const auto last = msg.find_last_not_of(" \t\r\n");
+					g_buryMessage = first == std::string::npos ? std::string() : msg.substr(first, last - first + 1);
 					g_buryConfirmed = true;
 				}
 			}
@@ -908,15 +914,25 @@ namespace
 		if (!movie->GetVariable(&text, "_root.textEntry.TextInputInstance.textField.text") || !text.IsString()) return;
 		const std::string_view s = text.GetString();
 		if (s.find_first_not_of(" \t\r\n") != std::string_view::npos) return;   // has text: the box sends it
+		// Let the box accept it itself: give it a single space (its Accept refuses an
+		// empty field) and call its own onAccept. That sends the text (read as "no
+		// epitaph"), turns text input OFF again and closes the box. Closing the menu
+		// from outside skipped skse.AllowTextInput(false), which left the game in
+		// text-input mode: the player could look around but not move.
+		const RE::GFxValue space[1]{ " " };
+		const bool set = movie->Invoke("_root.textEntry.setTextEntryMenuText", nullptr, space, 1);
+		if (set && movie->Invoke("_root.textEntry.onAccept", nullptr, nullptr, 0)) return;
+		// A text box without those functions: do what its Accept does, by hand.
 		{
 			std::scoped_lock lk(g_buryMutex);
 			if (!g_burying || g_buryConfirmed) return;
 			g_buryMessage.clear();
 			g_buryConfirmed = true;
 		}
-		if (auto* queue = RE::UIMessageQueue::GetSingleton()) {
-			queue->AddMessage("CustomMenu", RE::UI_MESSAGE_TYPE::kHide, nullptr);
-		}
+		const RE::GFxValue off[1]{ false };
+		movie->Invoke("_global.skse.AllowTextInput", nullptr, off, 1);
+		const RE::GFxValue name[1]{ "CustomMenu" };
+		movie->Invoke("_global.skse.CloseMenu", nullptr, name, 1);
 	}
 
 	class EpitaphEnterSink : public RE::BSTEventSink<RE::InputEvent*>
