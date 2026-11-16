@@ -72,6 +72,7 @@ takes an item; it returns the moment you release Shift or look away.
 
 ## Requirements
 
+- **SKSE** and **Address Library for SKSE Plugins**
 - **SkyPrompt** (the prompt framework)
 - **UIExtensions** (soft) — provides the custom-epitaph text box for Bury.
   Almost every load order already has it. Without it, Bury still works but
@@ -85,8 +86,8 @@ takes an item; it returns the moment you release Shift or look away.
   Pay Your Respects is **not** required.
 - Disable the original *Press F To Pay Respects* AND *Collect Bodies* — this
   replaces both.
-- Game versions: SE 1.5.97 and AE 1.6.x (Steam and GOG) through Address Library.
-  VR is built in but untested.
+- Game versions: built for SE 1.5.97, AE 1.6.x and VR through Address Library;
+  tested on AE 1.6.1170 (Steam) only. SE, GOG and VR are untested.
 - **Controller:** set `revealGamepad` (the button you hold, the controller's
   Shift), `layToRestGamepad` / `resurrectGamepad` (tap/hold like F / E) and
   `graveDestroyGamepad`. Codes: 266 D-Up, 267 D-Down, 268 D-Left, 269 D-Right,
@@ -129,13 +130,39 @@ time it runs (under MO2 it lands in `overwrite`), so an update never resets your
 - `[General]` `debug` (default false — true writes debug lines to the log).
 - A key set to -1 on both keyboard and gamepad removes that prompt line.
 
+## Changelog
+
+**1.6.0** (Nexus page versions before this: 1.3)
+- Dig Up: a buried person comes back up as a dead draugr, "Remains of <Name>", male or
+  female, carrying everything they were buried with (quest items and keys too). Loot it,
+  carry it, or bury it again. Creatures keep no remains.
+- Ash piles: Bury gives a grave that digs up as a small burial urn, "Ashes of <Name>";
+  Pick Up (Shift, hold E) on an ash pile gathers the ashes into an urn and carries it.
+  Urns can be looted, carried, set down and buried again. Twin ash piles of one actor
+  leave together.
+- Edit Epitaph on your graves (Shift, press F). An empty epitaph reads "Here lies <Name>";
+  Tab cancels the box.
+- Graves are permanent.
+- Graves, dug-up remains and dropped urns sit on roads, floors and bridges instead of
+  sinking to the terrain under them.
+- Quest items always reach you (Lay to Rest, creatures, after the body has left).
+- Bodies can be handed to followers (they don't count against the carry limit while you
+  trade).
+- QuickLoot IE 4.x support (the loot list hides while Shift is held).
+- Controller: a reveal button (the controller's Shift) and a grave button.
+- Safety: actions fire only on the body the key press began on; prompts never show on
+  activation-blocked corpses (carry mods); the reveal key must be physically held;
+  turned-off actions (Resurrect, Take) stay off.
+- The INI is written on first run instead of shipped, so updates never reset settings.
+- Fix: living NPCs with "ash" in their name no longer get the corpse prompts.
+
 ## Build
 
 ```
 cmake --preset release
 cmake --build build/release --config Release
 ```
-DLL auto-deploys to `X:/MODDINGSSE/modorganizer2/mods/BuryTakeBodies--Claude/SKSE/Plugins`.
+The DLL is copied to `OUTPUT_FOLDER/SKSE/Plugins` (set `OUTPUT_FOLDER` in `CMakeLists.txt`).
 
 Depends on CommonLibSSE-NG (vcpkg, Monitor221hz registry). SimpleIni + the
 SkyPrompt API header are vendored under `include/`.
