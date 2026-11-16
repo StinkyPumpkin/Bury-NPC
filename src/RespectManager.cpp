@@ -114,6 +114,52 @@ namespace
 			pos, RE::NiPoint3{ 0.0f, 0.0f, heading });
 	}
 
+	// The grave for an urn being buried again. The urn can sit right at the player's
+	// feet (just dropped) or above the ground, and a grave there floated and caught
+	// the player in its collision. It goes on the ground at least kMinFromPlayer
+	// away, facing the player.
+	void StandGraveForUrn(RE::TESObjectREFR* a_grave, RE::TESObjectREFR* a_urn)
+	{
+		constexpr float kMinFromPlayer = 90.0f;
+		if (!a_grave || !a_urn) return;
+		RE::NiPoint3 pos = a_urn->GetPosition();
+		pos.z -= 5.0f;   // the half-size jar's origin is its centre
+		float heading = a_urn->GetAngleZ();
+		bool moved = false;
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (player) {
+			const RE::NiPoint3 p = player->GetPosition();
+			RE::NiPoint3 d = pos - p;
+			d.z = 0.0f;
+			float len = d.Length();
+			if (len < 1.0f) {   // on top of the player: in front of them instead
+				const float h = player->GetAngleZ();
+				d = RE::NiPoint3{ std::sin(h), std::cos(h), 0.0f };
+				len = 1.0f;
+			}
+			if (len < kMinFromPlayer) {
+				pos = p + d * (kMinFromPlayer / len);
+				moved = true;
+			}
+			const RE::NiPoint3 toPlayer = p - pos;
+			if (toPlayer.x != 0.0f || toPlayer.y != 0.0f) heading = std::atan2(toPlayer.x, toPlayer.y);
+			if (moved) pos.z = p.z;   // moved out to the player's level
+		}
+		if (auto* cell = a_urn->GetParentCell(); cell && !cell->IsInteriorCell()) {
+			float land = 0.0f;
+			if (auto* tes = RE::TES::GetSingleton(); tes && tes->GetLandHeight(pos, land) &&
+				std::abs(land - pos.z) < 120.0f) {
+				pos.z = land;
+			}
+		} else if (player && !moved) {
+			// Indoors there is no terrain to read: an urn still in the air goes down to
+			// the player's floor.
+			if (pos.z > player->GetPositionZ() + 20.0f) pos.z = player->GetPositionZ();
+		}
+		MoveRefTo(a_grave, a_grave->GetParentCell(), a_grave->GetWorldspace(),
+			pos, RE::NiPoint3{ 0.0f, 0.0f, heading });
+	}
+
 	void PlayTurnUndeadSound()
 	{
 		if (!g_soundForm) return;
@@ -491,7 +537,7 @@ namespace
 				body->SetActivationBlocked(false);
 				return;
 			}
-			StandGraveUpright(grave.get(), body);
+			StandGraveForUrn(grave.get(), body);
 			grave->SetDisplayName(RE::BSFixedString(a_engraving), true);
 			PlayTurnUndeadSound();
 			body->SetActivationBlocked(false);
@@ -989,6 +1035,29 @@ namespace
 	// an urn's 3D loads (dig up, drop after Pick Up, cell or save load) it is
 	// switched to dynamic motion. Urns waiting in the holding cell never load.
 	// ------------------------------------------------------------------
+	// Switch a loaded urn to dynamic motion a_ms from now (on the main thread), and
+	// log whether the game took it.
+	void MakeUrnDynamicLater(RE::FormID a_urnID, int a_ms)
+	{
+		const std::uint32_t gen = g_generation.load();
+		std::thread([a_urnID, a_ms, gen]() {
+			std::this_thread::sleep_for(std::chrono::milliseconds(a_ms));
+			if (auto* task = SKSE::GetTaskInterface()) {
+				task->AddTask([a_urnID, a_ms, gen]() {
+					if (g_generation.load() != gen) return;
+					auto* urn = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_urnID);
+					if (!IsUrn(urn) || urn->IsDisabled()) return;
+					if (!urn->Is3DLoaded()) {
+						logger::info("Urn {:08X}: 3D not loaded {} ms on - physics not set", a_urnID, a_ms);
+						return;
+					}
+					const bool ok = urn->SetMotionType(RE::TESObjectREFR::MotionType::kDynamic, true);
+					logger::info("Urn {:08X}: dynamic motion after {} ms -> {}", a_urnID, a_ms, ok ? "set" : "REFUSED");
+				});
+			}
+		}).detach();
+	}
+
 	class UrnPhysicsSink : public RE::BSTEventSink<RE::TESObjectLoadedEvent>
 	{
 	public:
@@ -1011,14 +1080,17 @@ namespace
 			if (!a_event || !a_event->loaded || !g_remainsUrn) return RE::BSEventNotifyControl::kContinue;
 			const RE::FormID id = a_event->formID;
 			if (!IsUrn(RE::TESForm::LookupByID<RE::TESObjectREFR>(id))) return RE::BSEventNotifyControl::kContinue;
-			// Next frame: the collision object is in the world by then.
+			// Next frame, and again half a second on: the game may still be setting up
+			// (or resetting) the container's collision right after its 3D loads.
 			if (auto* task = SKSE::GetTaskInterface()) {
 				task->AddTask([id]() {
 					auto* urn = RE::TESForm::LookupByID<RE::TESObjectREFR>(id);
 					if (!IsUrn(urn) || urn->IsDisabled() || !urn->Is3DLoaded()) return;
-					urn->SetMotionType(RE::TESObjectREFR::MotionType::kDynamic, true);
+					const bool ok = urn->SetMotionType(RE::TESObjectREFR::MotionType::kDynamic, true);
+					logger::info("Urn {:08X}: 3D loaded, dynamic motion next frame -> {}", id, ok ? "set" : "REFUSED");
 				});
 			}
+			MakeUrnDynamicLater(id, 500);
 			return RE::BSEventNotifyControl::kContinue;
 		}
 	};
@@ -1168,6 +1240,17 @@ namespace RespectManager
 	bool IsUrnRef(RE::TESObjectREFR* a_ref)
 	{
 		return IsUrn(a_ref);
+	}
+
+	void SetUrnDown(RE::FormID a_urnID, RE::TESObjectREFR* a_spot)
+	{
+		auto* urn = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_urnID);
+		if (!IsUrn(urn) || !a_spot) return;
+		RE::NiPoint3 pos = a_spot->GetPosition();
+		pos.z += 6.0f;   // the half-size jar's origin is its centre (5 above its base)
+		MakeUrnSmall(urn);   // still unloaded in the holding cell
+		MoveRefTo(urn, a_spot->GetParentCell(), a_spot->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, a_spot->GetAngleZ() });
+		logger::info("Urn {:08X} set down at {:.0f} {:.0f} {:.0f}", a_urnID, pos.x, pos.y, pos.z);
 	}
 
 	bool PickUpAshPile(RE::FormID a_refID)

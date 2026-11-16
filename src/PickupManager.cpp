@@ -3,8 +3,10 @@
 #include "Settings.h"
 #include "RespectManager.h"
 
+#include <chrono>
 #include <cstdint>
 #include <mutex>
+#include <thread>
 
 namespace
 {
@@ -121,16 +123,38 @@ namespace
 		}
 
 		auto* body = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_bodyID);
-		if (body) {
-			if (token) {
-				body->MoveTo(token);  // exact drop spot
-			} else if (auto* player = RE::PlayerCharacter::GetSingleton()) {
-				body->MoveTo(player); // token never found — drop at the player
+		if (body && token && RespectManager::IsUrnRef(body)) {
+			// The token appears in the air in front of the player and falls; a body
+			// ragdolls down from there, but an urn has nothing to fall with. Let the
+			// token land first, then set the urn down where it lies.
+			const RE::FormID tokenID = token->GetFormID();
+			std::thread([a_bodyID, tokenID]() {
+				std::this_thread::sleep_for(std::chrono::milliseconds(800));
+				if (auto* task = SKSE::GetTaskInterface()) {
+					task->AddTask([a_bodyID, tokenID]() {
+						auto* t = RE::TESForm::LookupByID<RE::TESObjectREFR>(tokenID);
+						if (t && !t->IsDisabled()) {
+							RespectManager::SetUrnDown(a_bodyID, t);
+							t->Disable();
+							t->SetDelete(true);
+						} else if (auto* b = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_bodyID)) {
+							if (auto* player = RE::PlayerCharacter::GetSingleton()) b->MoveTo(player);
+						}
+					});
+				}
+			}).detach();
+		} else {
+			if (body) {
+				if (token) {
+					body->MoveTo(token);  // exact drop spot
+				} else if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+					body->MoveTo(player); // token never found — drop at the player
+				}
 			}
-		}
-		if (token) {
-			token->Disable();
-			token->SetDelete(true);
+			if (token) {
+				token->Disable();
+				token->SetDelete(true);
+			}
 		}
 
 		logger::info("Pickup: drop slot={} body={:08X} bodyFound={} token={} attempt={}",
