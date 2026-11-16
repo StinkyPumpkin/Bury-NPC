@@ -1035,24 +1035,30 @@ namespace
 	// an urn's 3D loads (dig up, drop after Pick Up, cell or save load) it is
 	// switched to dynamic motion. Urns waiting in the holding cell never load.
 	// ------------------------------------------------------------------
-	// Switch a loaded urn to dynamic motion a_ms from now (on the main thread), and
-	// log whether the game took it.
-	void MakeUrnDynamicLater(RE::FormID a_urnID, int a_ms)
+	// Switch an urn to dynamic motion once its 3D has loaded: checked every 250 ms
+	// (from a_ms on), up to 3 s; the result is logged. Called right after this mod
+	// places an urn (Dig Up, drop) - the game's "3D loaded" event does not reach
+	// this sink for the urn.
+	void MakeUrnDynamicLater(RE::FormID a_urnID, int a_ms, int a_try = 0)
 	{
 		const std::uint32_t gen = g_generation.load();
-		std::thread([a_urnID, a_ms, gen]() {
+		std::thread([a_urnID, a_ms, a_try, gen]() {
 			std::this_thread::sleep_for(std::chrono::milliseconds(a_ms));
 			if (auto* task = SKSE::GetTaskInterface()) {
-				task->AddTask([a_urnID, a_ms, gen]() {
+				task->AddTask([a_urnID, a_try, gen]() {
 					if (g_generation.load() != gen) return;
 					auto* urn = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_urnID);
 					if (!IsUrn(urn) || urn->IsDisabled()) return;
 					if (!urn->Is3DLoaded()) {
-						logger::info("Urn {:08X}: 3D not loaded {} ms on - physics not set", a_urnID, a_ms);
+						if (a_try < 12) {
+							MakeUrnDynamicLater(a_urnID, 250, a_try + 1);   // a new thread, not a re-queued task
+						} else {
+							logger::info("Urn {:08X}: 3D never loaded - physics not set", a_urnID);
+						}
 						return;
 					}
 					const bool ok = urn->SetMotionType(RE::TESObjectREFR::MotionType::kDynamic, true);
-					logger::info("Urn {:08X}: dynamic motion after {} ms -> {}", a_urnID, a_ms, ok ? "set" : "REFUSED");
+					logger::info("Urn {:08X}: dynamic motion (check {}) -> {}", a_urnID, a_try + 1, ok ? "set" : "REFUSED");
 				});
 			}
 		}).detach();
@@ -1247,10 +1253,20 @@ namespace RespectManager
 		auto* urn = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_urnID);
 		if (!IsUrn(urn) || !a_spot) return;
 		RE::NiPoint3 pos = a_spot->GetPosition();
+		// Outdoors the dropped token can sink into the terrain (seen: 30 units under
+		// it, the urn ended up buried): never below the ground. A token resting on a
+		// rock or a table above the terrain keeps its own height.
+		if (auto* cell = a_spot->GetParentCell(); cell && !cell->IsInteriorCell()) {
+			float land = 0.0f;
+			if (auto* tes = RE::TES::GetSingleton(); tes && tes->GetLandHeight(pos, land) && land > pos.z) {
+				pos.z = land;
+			}
+		}
 		pos.z += 6.0f;   // the half-size jar's origin is its centre (5 above its base)
 		MakeUrnSmall(urn);   // still unloaded in the holding cell
 		MoveRefTo(urn, a_spot->GetParentCell(), a_spot->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, a_spot->GetAngleZ() });
 		logger::info("Urn {:08X} set down at {:.0f} {:.0f} {:.0f}", a_urnID, pos.x, pos.y, pos.z);
+		MakeUrnDynamicLater(a_urnID, 250);
 	}
 
 	bool PickUpAshPile(RE::FormID a_refID)
@@ -1527,6 +1543,7 @@ namespace RespectManager
 						MoveRefTo(remains, g->GetParentCell(), g->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, heading });
 						RE::DebugNotification("You dig up a burial urn.");
 						logger::info("Dig Up: urn {:08X} set down at grave {:08X}", remainsID, g->GetFormID());
+						MakeUrnDynamicLater(remainsID, 250);
 					} else if (RaiseRemainsDraugr(remains, g)) {
 						RE::DebugNotification("You dig up their remains.");
 					} else {
