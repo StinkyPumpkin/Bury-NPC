@@ -347,6 +347,15 @@ namespace
 	// graves: Edit Epitaph (a press of the Lay key) and Destroy Grave / Dig Up
 	// (a hold of the grave key).
 	// ------------------------------------------------------------------
+	// --Claude 2026-11-18: SkyPrompt 2.5.2 shows nothing for an unanchored (refid 0) kSinglePress + kHold pair
+	// (tested in game: no prompt, no event; once only an empty "(2/2)" pager). Both grave prompts are now
+	// sent the way the corpse prompts are, which 2.5.2 shows and runs: kHold prompts anchored to a reference
+	// (a marker above the grave, see GraveAnchorFor), a tap told from a hold by kUp with no kAccepted before it.
+	std::atomic<bool> g_armedEpitaph{ false };
+	std::atomic<bool> g_armedDestroy{ false };
+	std::atomic<bool> g_epitaphHeld{ false };
+	std::atomic<RE::FormID> g_pressGrave{ 0 };
+
 	struct GravePromptSink : public SkyPromptAPI::PromptSink
 	{
 		SkyPromptAPI::Prompt m_epitaph;
@@ -359,12 +368,12 @@ namespace
 			m_epitaph.text = "Edit Epitaph";
 			m_epitaph.eventID = EVENT_EPITAPH;
 			m_epitaph.actionID = ACTION_EPITAPH;
-			m_epitaph.type = SkyPromptAPI::PromptType::kSinglePress;
+			m_epitaph.type = SkyPromptAPI::PromptType::kHold;
 			m_epitaph.refid = 0;
 			m_epitaph.text_color = 0xFFFFFFFF;
 			m_epitaph.progress = 0.0f;
 
-			m_prompt.text = "Destroy Grave";
+			m_prompt.text = "Destroy Grave (hold)";
 			m_prompt.eventID = EVENT_DESTROY;
 			m_prompt.actionID = ACTION_DESTROY;
 			m_prompt.type = SkyPromptAPI::PromptType::kHold;
@@ -373,11 +382,11 @@ namespace
 			m_prompt.progress = 0.0f;
 		}
 
-		void BuildVisible(bool a_epitaph, bool a_destroy)
+		void BuildVisible(RE::FormID a_anchorID, bool a_epitaph, bool a_destroy)
 		{
 			std::uint8_t n = 0;
-			if (a_epitaph) m_visible[n++] = m_epitaph;
-			if (a_destroy) m_visible[n++] = m_prompt;
+			if (a_epitaph) { m_visible[n] = m_epitaph; m_visible[n].refid = a_anchorID; ++n; }
+			if (a_destroy) { m_visible[n] = m_prompt; m_visible[n].refid = a_anchorID; ++n; }
 			m_count.store(n);
 		}
 
@@ -386,25 +395,86 @@ namespace
 			return std::span<const SkyPromptAPI::Prompt>(m_visible, m_count.load());
 		}
 
+		// Edit Epitaph: a tap (kUp, no kAccepted) or a hold (kAccepted) opens the box, once per press.
+		// Destroy Grave / Dig Up: only a hold (kAccepted). A press counts only if the reveal (Shift, or the
+		// controller's reveal button) was down when it began, on the grave it began on (as the corpse prompts).
 		void ProcessEvent(SkyPromptAPI::PromptEvent a_event) const override
 		{
-			if (a_event.type != SkyPromptAPI::PromptEventType::kAccepted) return;
-			RE::FormID graveID = g_currentGraveID.load();
-			if (graveID == 0) return;
-			if (!ModifierPhysicallyDown()) return;   // --Claude 2026-10-12: stale reveal, see g_armedA
+			const RE::FormID graveID = g_currentGraveID.load();
+			auto* task = SKSE::GetTaskInterface();
+			if (!task) return;
+			using ET = SkyPromptAPI::PromptEventType;
+			const auto etype = a_event.type;
 			if (a_event.prompt.actionID == ACTION_EPITAPH) {
-				SKSE::GetTaskInterface()->AddTask([graveID]() {
-					RespectManager::ExecuteEditEpitaph(graveID);
-				});
+				if (etype == ET::kDown) {
+					g_epitaphHeld.store(false);
+					g_pressGrave.store(graveID);
+					g_armedEpitaph.store(graveID != 0 && RevealSatisfied());
+				} else if (etype == ET::kAccepted) {
+					if (!g_armedEpitaph.load() || g_pressGrave.load() != graveID) return;
+					g_epitaphHeld.store(true);
+					g_armedEpitaph.store(false);
+					task->AddTask([graveID]() { RespectManager::ExecuteEditEpitaph(graveID); });
+				} else if (etype == ET::kUp) {
+					if (!g_armedEpitaph.exchange(false) || g_pressGrave.load() != graveID) return;
+					if (!g_epitaphHeld.exchange(false)) task->AddTask([graveID]() { RespectManager::ExecuteEditEpitaph(graveID); });
+				}
 			} else if (a_event.prompt.actionID == ACTION_DESTROY) {
-				SKSE::GetTaskInterface()->AddTask([graveID]() {
-					RespectManager::DestroyGrave(graveID);
-				});
+				if (etype == ET::kDown) {
+					g_pressGrave.store(graveID);
+					g_armedDestroy.store(graveID != 0 && RevealSatisfied());
+				} else if (etype == ET::kAccepted) {
+					if (!g_armedDestroy.exchange(false) || g_pressGrave.load() != graveID) return;
+					task->AddTask([graveID]() { RespectManager::DestroyGrave(graveID); });
+				} else if (etype == ET::kUp) {
+					g_armedDestroy.store(false);
+				}
 			}
 		}
 	};
 
 	GravePromptSink g_graveSink;
+
+	// SkyPrompt 2.5.2 places a prompt set on a non-actor from that reference's Havok box (its bounds only
+	// without one). For our grave that point projected off screen and the prompts sat clamped to a screen
+	// edge. They are anchored to a temporary XMarker just above the grave instead: it has no model and no
+	// collision in game, so SkyPrompt uses its small bounds at its own position. Deleted with the prompts.
+	constexpr RE::FormID kXMarker = 0x3B;          // Skyrim.esm XMarker
+	constexpr float      kGraveAnchorRise = 20.0f;  // the prompts show about 26 units above this point
+	RE::ObjectRefHandle  g_graveAnchor;
+	RE::FormID           g_graveAnchorFor = 0;
+
+	void DeleteGraveAnchor()
+	{
+		if (auto anchor = g_graveAnchor.get()) {
+			anchor->Disable();
+			anchor->SetDelete(true);
+		}
+		g_graveAnchor.reset();
+		g_graveAnchorFor = 0;
+	}
+
+	RE::FormID GraveAnchorFor(RE::FormID a_graveID)
+	{
+		auto* grave = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_graveID);
+		if (!grave) return a_graveID;
+		if (g_graveAnchorFor == a_graveID) {
+			if (auto anchor = g_graveAnchor.get()) return anchor->GetFormID();
+		}
+		DeleteGraveAnchor();
+		auto* xmarker = RE::TESForm::LookupByID<RE::TESBoundObject>(kXMarker);
+		RE::NiPointer<RE::TESObjectREFR> anchor = xmarker ? grave->PlaceObjectAtMe(xmarker, false) : nullptr;
+		if (!anchor) {
+			logger::warn("Grave prompts: no anchor marker placed, using the grave {:08X}", a_graveID);
+			return a_graveID;
+		}
+		RE::NiPoint3 pos = grave->GetPosition();
+		pos.z += kGraveAnchorRise;
+		anchor->SetPosition(pos);
+		g_graveAnchor = anchor->GetHandle();
+		g_graveAnchorFor = a_graveID;
+		return anchor->GetFormID();
+	}
 
 	void SendGravePrompt()
 	{
@@ -418,15 +488,15 @@ namespace
 		const bool destroy = s.graveDestroyEnabled.load() || hasRemains;
 		// Edit Epitaph is on the Lay key; both its keys at -1 switch it off.
 		const bool epitaph = s.layKeyboard.load() >= 0 || s.layGamepad.load() >= 0;
-		// refid 0 = not anchored to the grave's on-screen position (a grave sits
-		// on the ground, which would drag the prompt to the bottom of the
-		// screen / off the left edge).  With 0 it renders at the theme's fixed
-		// centre.  We track the target grave in g_currentGraveID, not refid.
-		g_graveSink.m_prompt.refid = 0;
-		// A grave holding a person's remains is dug up instead of destroyed.
-		g_graveSink.m_prompt.text = hasRemains ? "Dig Up" : "Destroy Grave";
-		g_graveSink.BuildVisible(epitaph, destroy);
-		if (g_graveSink.m_count.load() == 0) return;
+		// Anchored (BuildVisible sets refid), as the corpse prompts are: SkyPrompt 2.5.2 shows no unanchored
+		// (refid 0) prompt set. The anchor is the marker above the grave; the target grave is still tracked
+		// in g_currentGraveID. A grave holding a person's remains is dug up instead of destroyed.
+		g_graveSink.m_prompt.text = hasRemains ? "Dig Up (hold)" : "Destroy Grave (hold)";
+		g_graveSink.BuildVisible(GraveAnchorFor(graveID), epitaph, destroy);
+		if (g_graveSink.m_count.load() == 0) {
+			DeleteGraveAnchor();
+			return;
+		}
 		(void)SkyPromptAPI::SendPrompt(&g_graveSink, g_clientID);
 		g_graveShowing.store(true);
 	}
@@ -437,6 +507,7 @@ namespace
 			SkyPromptAPI::RemovePrompt(&g_graveSink, g_clientID);
 			g_graveShowing.store(false);
 		}
+		DeleteGraveAnchor();
 	}
 
 	// Tracks the reveal modifier.  While it is held it reveals whichever prompt
@@ -733,4 +804,14 @@ void PromptManager::Hide()
 void PromptManager::RefreshHotkeys()
 {
 	BuildButtonKeys();
+}
+
+void PromptManager::OnGameReset()
+{
+	// A save is loading (or a new game starts): the marker and its handle belong to the old game, and the
+	// handle could now name another reference. Forget it without touching it.
+	g_graveAnchor = RE::ObjectRefHandle{};
+	g_graveAnchorFor = 0;
+	g_graveShowing.store(false);
+	g_currentGraveID.store(0);
 }

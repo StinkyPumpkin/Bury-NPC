@@ -133,6 +133,14 @@ time it runs (under MO2 it lands in `overwrite`), so an update never resets your
 
 ## Changelog
 
+**1.6.2**
+- SkyPrompt 2.5.x: the grave prompts (Edit Epitaph, Dig Up, Destroy Grave) showed nothing and
+  did nothing. They are now sent like the body prompts (anchored, a tap told from a hold):
+  Shift + F opens the epitaph box, Shift + hold E digs up or destroys.
+- Placed by the grave itself, the prompts went off screen or slid along the screen edge. They now sit
+  on a small invisible marker just above the grave, removed again when the prompts close.
+- The grave carries the headstone's real object bounds (they were empty).
+
 **1.6.1**
 - Skyrim 1.7.x (1.7.99 / 1.7.104): the DLL is now built on CommonLibSSE-NG 9.1.0, which
   reads the 1.7 Address Library and declares Address Library v5 support. 1.6.0 stopped

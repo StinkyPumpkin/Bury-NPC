@@ -10,4 +10,5 @@ namespace PromptManager
 	void Hide();
 
 	void RefreshHotkeys();
+	void OnGameReset();   // kPreLoadGame / kNewGame
 }

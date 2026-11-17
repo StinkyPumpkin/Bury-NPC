@@ -56,6 +56,7 @@ namespace
 		case SKSE::MessagingInterface::kPreLoadGame:
 		case SKSE::MessagingInterface::kNewGame:
 			RespectManager::OnGameReset();
+			PromptManager::OnGameReset();
 			break;
 		default:
 			break;

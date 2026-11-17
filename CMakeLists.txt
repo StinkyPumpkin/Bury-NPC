@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "")
-project(BuryTakeBodies VERSION 1.6.1 LANGUAGES CXX)
+project(BuryTakeBodies VERSION 1.6.2 LANGUAGES CXX)
 
 # Deploy target: the mod FOLDER gets --Claude; the DLL name stays plain.
 set(OUTPUT_FOLDER "X:/MODDINGSSE/modorganizer2/mods/BuryTakeBodies--Claude")
