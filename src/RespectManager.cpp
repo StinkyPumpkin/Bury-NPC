@@ -171,7 +171,7 @@ namespace
 		if (!audioManager) return;
 
 		RE::BSSoundHandle soundHandle;
-		audioManager->BuildSoundDataFromDescriptor(soundHandle, descriptor, 0x1A);
+		audioManager->GetSoundHandle(soundHandle, descriptor, 0x1A);
 		if (soundHandle.IsValid()) {
 			auto* player = RE::PlayerCharacter::GetSingleton();
 			if (player && player->Get3D()) {
@@ -273,7 +273,7 @@ namespace
 			return !weap->weaponData.flags.any(RE::TESObjectWEAP::Data::Flag::kNonPlayable);
 		}
 		if (auto* ammo = a_obj->As<RE::TESAmmo>()) {
-			return !ammo->data.flags.any(RE::AMMO_DATA::Flag::kNonPlayable);
+			return !ammo->GetRuntimeData().data.flags.any(RE::AMMO_DATA::Flag::kNonPlayable);
 		}
 		return true;
 	}
@@ -394,7 +394,7 @@ namespace
 		}
 		logger::info("Quest items: moved {} stacks from {:08X} to the player ({} refused)", moved, a_actor->GetFormID(), stuck.size());
 		if (moved > 0) {
-			RE::DebugNotification("You took the quest items they carried.");
+			RE::SendHUDMessage::ShowHUDMessage("You took the quest items they carried.");
 		}
 		return moved;
 	}
@@ -732,8 +732,8 @@ namespace
 					// and reads the new name. (VR keeps its pick data elsewhere: skipped.)
 					if (!REL::Module::IsVR()) {
 						if (auto* pick = RE::CrosshairPickData::GetSingleton();
-							pick && pick->target.get().get() == grave) {
-							pick->target = RE::ObjectRefHandle{};
+							pick && pick->target[0].get().get() == grave) {
+							pick->target[0] = RE::ObjectRefHandle{};
 						}
 					}
 				});
@@ -763,7 +763,7 @@ namespace
 	{
 		// v1.4.3: tell the player what the box is for — the NAME goes on
 		// automatically, the box is only the epitaph.
-		RE::DebugNotification(a_edit ? "Edit the epitaph — leave it empty for \"Here lies\" and the name."
+		RE::SendHUDMessage::ShowHUDMessage(a_edit ? "Edit the epitaph — leave it empty for \"Here lies\" and the name."
 		                             : "Write your epitaph — the name is engraved automatically.");
 
 		// If the box never appears (UIExtensions installed but its menu failed),
@@ -793,11 +793,11 @@ namespace
 					}
 					if (editGraveID) {
 						logger::warn("Edit Epitaph: the text box did not open for grave {:08X}", editGraveID);
-						RE::DebugNotification("The epitaph box didn't open.");
+						RE::SendHUDMessage::ShowHUDMessage("The epitaph box didn't open.");
 						return;
 					}
 					logger::warn("Bury: the epitaph box did not open; burying {:08X} with the name only", bodyID);
-					RE::DebugNotification("The epitaph box didn't open - buried with the name only.");
+					RE::SendHUDMessage::ShowHUDMessage("The epitaph box didn't open - buried with the name only.");
 					if (auto* body = RE::TESForm::LookupByID<RE::TESObjectREFR>(bodyID)) {
 						body->SetActivationBlocked(false);
 					}
@@ -1206,11 +1206,11 @@ namespace RespectManager
 		if (!PFR::Settings::GetSingleton().collectEnabled.load()) return true;
 		auto* marker = PickupManager::GetHoldingMarker();
 		if (!g_remainsUrn || !marker) {
-			RE::DebugNotification("Picking up ashes needs BuryTakeBodies.esp enabled.");
+			RE::SendHUDMessage::ShowHUDMessage("Picking up ashes needs BuryTakeBodies.esp enabled.");
 			return true;
 		}
 		if (!PickupManager::HasFreeSlot()) {
-			RE::DebugNotification("You can't carry any more.");
+			RE::SendHUDMessage::ShowHUDMessage("You can't carry any more.");
 			return true;
 		}
 		RE::NiPointer<RE::TESObjectREFR> urn = marker->PlaceObjectAtMe(g_remainsUrn, true);
@@ -1321,7 +1321,7 @@ namespace RespectManager
 		// Bury is the HOLD half of the Lay/Bury key, so the shovel gate is enforced
 		// here (the prompt itself always shows for the Lay tap).
 		if (settings.buryRequiresShovel.load() && !PlayerHasShovel()) {
-			RE::DebugNotification("You need a shovel to bury the dead.");
+			RE::SendHUDMessage::ShowHUDMessage("You need a shovel to bury the dead.");
 			return;
 		}
 
@@ -1329,7 +1329,7 @@ namespace RespectManager
 		if (!IsValidCorpse(ref) && !IsUrn(ref)) return;   // a dug-up urn can be buried again
 
 		if (!g_graveActivator) {
-			RE::DebugNotification("Bury needs BuryTakeBodies.esp enabled.");
+			RE::SendHUDMessage::ShowHUDMessage("Bury needs BuryTakeBodies.esp enabled.");
 			return;
 		}
 
@@ -1355,7 +1355,7 @@ namespace RespectManager
 		if (!g_hasUIExtensions) {
 			// v1.4.3 (Nexus report): this fallback was SILENT — the player had no idea why
 			// no box appeared. Say it once, right when it matters.
-			RE::DebugNotification("Bury Take Bodies: install UIExtensions to write custom epitaphs.");
+			RE::SendHUDMessage::ShowHUDMessage("Bury Take Bodies: install UIExtensions to write custom epitaphs.");
 			std::string engraving = BuildEngraving(deadName, "");
 			ref->SetActivationBlocked(false);
 			if (auto* task = SKSE::GetTaskInterface()) {
@@ -1390,7 +1390,7 @@ namespace RespectManager
 		auto* grave = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_graveID);
 		if (!IsOurGrave(grave)) return;
 		if (!g_hasUIExtensions) {
-			RE::DebugNotification("Bury Take Bodies: install UIExtensions to edit epitaphs.");
+			RE::SendHUDMessage::ShowHUDMessage("Bury Take Bodies: install UIExtensions to edit epitaphs.");
 			return;
 		}
 
@@ -1455,7 +1455,7 @@ namespace RespectManager
 		// everything they carried) instead of just removing the headstone.
 		if (PickupManager::HasBuriedBody(a_graveID)) {
 			if (PFR::Settings::GetSingleton().buryRequiresShovel.load() && !PlayerHasShovel()) {
-				RE::DebugNotification("You need a shovel to dig up the dead.");
+				RE::SendHUDMessage::ShowHUDMessage("You need a shovel to dig up the dead.");
 				return;
 			}
 			PlayDigThen([a_graveID]() {
@@ -1470,13 +1470,13 @@ namespace RespectManager
 						// here); +8 looked right in game.
 						pos.z += 8.0f;
 						MoveRefTo(remains, g->GetParentCell(), g->GetWorldspace(), pos, RE::NiPoint3{ 0.0f, 0.0f, heading });
-						RE::DebugNotification("You dig up a burial urn.");
+						RE::SendHUDMessage::ShowHUDMessage("You dig up a burial urn.");
 						logger::info("Dig Up: urn {:08X} set down at grave {:08X}", remainsID, g->GetFormID());
 					} else if (RaiseRemainsDraugr(remains, g)) {
-						RE::DebugNotification("You dig up their remains.");
+						RE::SendHUDMessage::ShowHUDMessage("You dig up their remains.");
 					} else {
 						remains->MoveTo(g);   // no draugr record: the old skeleton container
-						RE::DebugNotification("You dig up the remains.");
+						RE::SendHUDMessage::ShowHUDMessage("You dig up the remains.");
 					}
 				}
 				PlayTurnUndeadSound();

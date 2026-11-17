@@ -93,11 +93,12 @@ namespace
 		if (!cell) return nullptr;
 
 		RE::TESObjectREFR* found = nullptr;
-		cell->ForEachReference([&](RE::TESObjectREFR& a_ref) {
-			auto* base = a_ref.GetBaseObject();
+		cell->ForEachReference([&](RE::TESObjectREFR* a_ref) {
+			if (!a_ref) return RE::BSContainer::ForEachResult::kContinue;
+			auto* base = a_ref->GetBaseObject();
 			if (base && base->GetFormID() == a_tokenBase &&
-				!a_ref.IsMarkedForDeletion() && !a_ref.IsDisabled()) {
-				found = &a_ref;
+				!a_ref->IsMarkedForDeletion() && !a_ref->IsDisabled()) {
+				found = a_ref;
 				return RE::BSContainer::ForEachResult::kStop;
 			}
 			return RE::BSContainer::ForEachResult::kContinue;
@@ -470,14 +471,14 @@ namespace PickupManager
 		if (!urn && (!actor || !actor->IsDead())) return;
 
 		if (!g_marker) {
-			RE::DebugNotification("Corpse storage missing (BuryTakeBodies.esp not loaded).");
+			RE::SendHUDMessage::ShowHUDMessage("Corpse storage missing (BuryTakeBodies.esp not loaded).");
 			return;
 		}
 
 		// Already carrying this exact body?
 		for (auto& s : g_slots) {
 			if (s.occupied && s.bodyID == a_refID) {
-				RE::DebugNotification("You are already carrying this body.");
+				RE::SendHUDMessage::ShowHUDMessage("You are already carrying this body.");
 				return;
 			}
 		}
@@ -487,7 +488,7 @@ namespace PickupManager
 			if (!s.occupied) { slot = &s; break; }
 		}
 		if (!slot) {
-			RE::DebugNotification("You can't carry any more bodies.");
+			RE::SendHUDMessage::ShowHUDMessage("You can't carry any more bodies.");
 			return;
 		}
 
@@ -525,7 +526,7 @@ namespace PickupManager
 		slot->name = itemName;
 		slot->weight = weight;
 
-		RE::DebugNotification(("Picked up " + itemName + ".").c_str());
+		RE::SendHUDMessage::ShowHUDMessage(("Picked up " + itemName + ".").c_str());
 
 		if (PFR::Settings::GetSingleton().debug.load()) {
 			logger::debug("Pickup: collected {:08X} as '{}' (w={:.0f})", a_refID, itemName, weight);

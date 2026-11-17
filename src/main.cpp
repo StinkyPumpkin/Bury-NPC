@@ -66,9 +66,11 @@ namespace
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
 	InitLogger();
-	SKSE::Init(a_skse);
+	// The plugin owns its logger; NG 9.x would otherwise open a second <plugin>.log.
+	SKSE::Init(a_skse, { .log = false });
 
-	logger::info("{} v{} loaded", Plugin::NAME, Plugin::VERSION);
+	logger::info("{} v{} loaded (CommonLibSSE-NG {}, game {})", Plugin::NAME, Plugin::VERSION,
+		BTB_COMMONLIB_VERSION, REL::Module::get().version().string());
 
 	// Cosave callbacks must be registered at load, before any save is read.
 	PickupManager::RegisterSerialization();

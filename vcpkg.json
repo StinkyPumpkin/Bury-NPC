@@ -1,8 +1,12 @@
 {
     "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
-    "name": "pressf-payrespects-claude",
-    "version-string": "1.1.0",
+    "name": "burytakebodies",
+    "version-string": "1.6.1",
     "dependencies": [
-        "commonlibsse-ng"
+        "directxmath",
+        "directxtk",
+        "fmt",
+        "rapidcsv",
+        "spdlog"
     ]
 }

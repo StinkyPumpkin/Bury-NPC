@@ -86,8 +86,9 @@ takes an item; it returns the moment you release Shift or look away.
   Pay Your Respects is **not** required.
 - Disable the original *Press F To Pay Respects* AND *Collect Bodies* — this
   replaces both.
-- Game versions: built for SE 1.5.97, AE 1.6.x and VR through Address Library;
-  tested on AE 1.6.1170 (Steam) only. SE, GOG and VR are untested.
+- Game versions: one DLL for SE 1.5.97, AE 1.6.x, AE 1.7.x (1.7.99 / 1.7.104) and VR
+  through Address Library (1.7.x needs Address Library v13 or newer and SKSE 2.3.1+).
+  Tested on AE 1.6.1170 (Steam) only. SE, GOG, 1.7.x and VR are untested.
 - **Controller:** set `revealGamepad` (the button you hold, the controller's
   Shift), `layToRestGamepad` / `resurrectGamepad` (tap/hold like F / E) and
   `graveDestroyGamepad`. Codes: 266 D-Up, 267 D-Down, 268 D-Left, 269 D-Right,
@@ -132,6 +133,12 @@ time it runs (under MO2 it lands in `overwrite`), so an update never resets your
 
 ## Changelog
 
+**1.6.1**
+- Skyrim 1.7.x (1.7.99 / 1.7.104): the DLL is now built on CommonLibSSE-NG 9.1.0, which
+  reads the 1.7 Address Library and declares Address Library v5 support. 1.6.0 stopped
+  at startup on 1.7.x with "REL/Relocation.h: failed to open address library file".
+  No gameplay changes.
+
 **1.6.0** (Nexus page versions before this: 1.3)
 - Dig Up: a buried person comes back up as a dead draugr, "Remains of <Name>", male or
   female, carrying everything they were buried with (quest items and keys too). Loot it,
@@ -159,10 +166,13 @@ time it runs (under MO2 it lands in `overwrite`), so an update never resets your
 ## Build
 
 ```
-cmake --preset release
-cmake --build build/release --config Release
+git submodule update --init --recursive --depth 1
+build.bat
 ```
-The DLL is copied to `OUTPUT_FOLDER/SKSE/Plugins` (set `OUTPUT_FOLDER` in `CMakeLists.txt`).
+`build.bat` sets up the VS 2022 (14.44) environment and `VCPKG_ROOT=C:\vcpkg`, configures
+`build\ng\release` on the first run (`cmake --preset release`) and builds. The DLL is copied
+to `OUTPUT_FOLDER/SKSE/Plugins` (set `OUTPUT_FOLDER` in `CMakeLists.txt`).
 
-Depends on CommonLibSSE-NG (vcpkg, Monitor221hz registry). SimpleIni + the
-SkyPrompt API header are vendored under `include/`.
+CommonLibSSE-NG is the alandtse fork, tag v9.1.0, built from source out of the submodule
+`extern/CommonLibSSE-NG` (vcpkg supplies fmt, spdlog, rapidcsv, DirectXTK). SimpleIni, the
+SkyPrompt API and the QuickLoot API headers are vendored under `include/`.

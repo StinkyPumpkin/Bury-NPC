@@ -119,7 +119,7 @@ namespace
 		auto* mgr = RE::BSInputDeviceManager::GetSingleton();
 		auto* kb  = mgr ? mgr->GetKeyboard() : nullptr;
 		if (!kb) return false;
-		const auto& keys = kb->curState;   // this CommonLib keeps curState as a plain member
+		const auto& keys = kb->GetRuntimeData().curState;
 		return key < sizeof(keys) && (keys[key] & 0x80) != 0;
 	}
 
